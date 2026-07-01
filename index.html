@@ -762,17 +762,9 @@ setClock(); setInterval(setClock,1000*30);
 // Set WORKER_URL to your deployed Cloudflare Worker URL.
 // When running locally (localhost) jget falls back to direct fetch + public proxies
 // so development still works without deploying first.
-const WORKER_URL = 'https://irish-nfl-worker.YOUR_SUBDOMAIN.workers.dev'; // ← update after deploy
-
-// Show a one-time reminder if the Worker URL hasn't been configured yet
-if(WORKER_URL.includes('YOUR_SUBDOMAIN')){
-  document.addEventListener('DOMContentLoaded',()=>{
-    const b = document.createElement('div');
-    b.style.cssText = 'background:#7c3aed;color:#fff;text-align:center;padding:6px 12px;font-size:12px;position:sticky;top:0;z-index:9999;';
-    b.innerHTML = '⚙️ Running in local mode — update <b>WORKER_URL</b> in the HTML after deploying your Cloudflare Worker for fast cached loads.';
-    document.body.prepend(b);
-  });
-}
+// Proxy URL — Netlify Edge Function handles all ESPN/weather requests
+// In production this is the same domain as the app so no CORS issues
+const WORKER_URL = '';
 
 async function jget(url){
   // If running on localhost, try direct fetch first then public proxies
@@ -794,9 +786,9 @@ async function jget(url){
     }
     throw new Error('All local fetch attempts failed for '+url);
   }
-  // Production: route everything through the Worker (fast, cached, no CORS issues)
-  const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
-  if(!r.ok) throw new Error(`Worker error ${r.status} for ${url}`);
+  // Production (Netlify): /proxy is the Edge Function on the same domain — no CORS, cached
+  const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
+  if(!r.ok) throw new Error(`Proxy error ${r.status} for ${url}`);
   return r.json();
 }
 
@@ -1994,11 +1986,10 @@ async function fetchTextWithProxyFallback(url){
     }
     throw new Error('fetchText: all attempts failed for '+url);
   }
-  // Production: Worker returns raw text for CSV endpoints too
-  const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
-  if(!r.ok) throw new Error(`Worker error ${r.status}`);
+  // Production (Netlify): same-domain Edge Function
+  const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
+  if(!r.ok) throw new Error(`Proxy error ${r.status}`);
   return await r.text();
-  throw new Error('All fetch attempts failed for '+url);
 }
 
 function csvFromUrl(url){
