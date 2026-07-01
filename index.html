@@ -514,8 +514,9 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
     <div id="searchResults"></div>
   </div>
   <div class="clock" id="clock"></div>
-  <div id="seasonBadge" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:0.5px;background:var(--panel2);border:1px solid var(--line);padding:6px 10px;border-radius:6px;color:var(--orange);">📊 2025 SEASON — LIVE</div>
-  <button id="themeToggleBtn" style="margin-left:auto;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="toggleTheme()" title="Switch between dark and light mode">🌙 Dark</button>
+  <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+  <button id="themeToggleBtn" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="toggleTheme()" title="Switch between dark and light mode">🌙 Dark</button>
+  </div>
 </header>
 
 <nav>
@@ -548,26 +549,47 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   <div id="tab-scores" class="tabpane"><div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <h2 style="margin:0;">Scores</h2>
-      <select id="scoresWeekSelect" class="week-select" onchange="changeScoresWeekTo(+this.value)">
-        <option value="">Week —</option>
-      </select>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="scoresSeasonSelect" class="week-select" onchange="changeScoresSeason(+this.value)">
+          <option value="2026" selected>2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+        </select>
+        <select id="scoresWeekSelect" class="week-select" onchange="changeScoresWeekTo(+this.value)">
+          <option value="">Week —</option>
+        </select>
+      </div>
     </div>
     <div id="scoresContent" class="loading">Loading…</div>
   </div></div>
   <div id="tab-standings" class="tabpane" style="display:none"><div class="panel">
-    <h2>Standings</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <h2 style="margin:0;">Standings</h2>
+      <select id="standingsSeasonSelect" class="week-select" onchange="changeStandingsSeason(+this.value)">
+        <option value="2026" selected>2026</option>
+        <option value="2025">2025</option>
+        <option value="2024">2024</option>
+      </select>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <button class="stat-cat active" id="standingsViewBtn" onclick="switchStandingsView('division')">Division Standings</button>
-      <button class="stat-cat" id="playoffViewBtn" title="Activates after Week 9" onclick="switchStandingsView('playoff')">Playoff Picture</button>
+      <button class="stat-cat" id="playoffViewBtn" onclick="switchStandingsView('playoff')">Playoff Picture</button>
     </div>
     <div id="standingsContent" class="loading">Loading…</div>
   </div></div>
   <div id="tab-schedule" class="tabpane" style="display:none"><div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <h2 style="margin:0;">Schedule</h2>
-      <select id="scheduleWeekSelect" class="week-select" onchange="changeScheduleWeekTo(+this.value)">
-        <option value="">Week —</option>
-      </select>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="scheduleSeasonSelect" class="week-select" onchange="changeScheduleSeason(+this.value)">
+          <option value="2026" selected>2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+        </select>
+        <select id="scheduleWeekSelect" class="week-select" onchange="changeScheduleWeekTo(+this.value)">
+          <option value="">Week —</option>
+        </select>
+      </div>
     </div>
     <div id="scheduleContent" class="loading">Loading…</div>
   </div></div>
@@ -746,7 +768,12 @@ const ONE_MONTH_MS = 30*24*60*60*1000;
 const TEST_SEASON = 2025;
 const TEST_WEEK = 18;
 let currentSeason = TEST_SEASON;
-let currentSeasonType = 0; // 0 = live/current
+let currentSeasonType = 0;
+
+// Per-tab season selection — independent for scores, schedule and standings
+let currentScoresSeason = 2026;
+let currentScheduleSeason = 2026;
+let currentStandingsSeason = 2026;
 
 function setClock(){
   document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'});
@@ -835,9 +862,9 @@ window.closeNavGroups = closeNavGroups;
 // ---------- TICKER + SCORES ----------
 let selectedScoresWeek = null; // null until first resolved (live mode discovers it; test mode defaults to TEST_WEEK)
 
-function weekScoreboardUrl(week){
-  const year = currentSeasonType===0 ? new Date().getFullYear() : currentSeason;
-  return `${API}/scoreboard?seasontype=2&week=${week}&dates=${year}`;
+function weekScoreboardUrl(week, season){
+  const yr = season || currentScoresSeason;
+  return `${API}/scoreboard?seasontype=2&week=${week}&dates=${yr}`;
 }
 
 function populateWeekDropdown(selectId, currentWeek, maxWeek){
@@ -855,13 +882,18 @@ function populateWeekDropdown(selectId, currentWeek, maxWeek){
 
 async function loadScores(){
   try{
+    const isCurrentSeason = currentScoresSeason >= new Date().getFullYear();
     if(selectedScoresWeek===null){
-      const data = await jget(`${API}/scoreboard`);
-      if(data.week?.number) liveCurrentWeek = data.week.number;
-      selectedScoresWeek = liveCurrentWeek || 1;
+      if(isCurrentSeason){
+        const data = await jget(`${API}/scoreboard`);
+        if(data.week?.number) liveCurrentWeek = data.week.number;
+        selectedScoresWeek = liveCurrentWeek || 1;
+      } else {
+        selectedScoresWeek = 18; // default to week 18 for past seasons
+      }
     }
-    const data = await jget(weekScoreboardUrl(selectedScoresWeek));
-    if(data.week?.number) liveCurrentWeek = data.week.number;
+    const data = await jget(weekScoreboardUrl(selectedScoresWeek, currentScoresSeason));
+    if(isCurrentSeason && data.week?.number) liveCurrentWeek = data.week.number;
     const events = data.events || [];
     populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
     renderTicker(events);
@@ -871,6 +903,13 @@ async function loadScores(){
     document.getElementById('tickerTrack').innerHTML = `<div class="tick-item">Scores unavailable</div>`;
   }
 }
+
+function changeScoresSeason(season){
+  currentScoresSeason = season;
+  selectedScoresWeek = null;
+  loadScores();
+}
+window.changeScoresSeason = changeScoresSeason;
 
 function changeScoresWeekTo(week){
   if(!week) return;
@@ -1090,13 +1129,19 @@ let liveCurrentWeek = null; // populated from ESPN's live scoreboard response, u
 
 async function loadStandings(){
   try{
-    const url = `${CORE}/standings?level=3&season=${TEST_SEASON}&seasontype=2`;
+    const url = `${CORE}/standings?level=3&season=${currentStandingsSeason}&seasontype=2`;
     standingsCache = await jget(url);
     renderStandingsView();
   }catch(e){
     document.getElementById('standingsContent').innerHTML = `<div class="err">Couldn't load standings.</div>`;
   }
 }
+
+function changeStandingsSeason(season){
+  currentStandingsSeason = season;
+  loadStandings();
+}
+window.changeStandingsSeason = changeStandingsSeason;
 
 function switchStandingsView(view){
   currentStandingsView = view;
@@ -1145,11 +1190,11 @@ function renderDivisionStandings(data){
 const PLAYOFF_PICTURE_MIN_WEEK = 9;
 
 function renderPlayoffPicture(data){
-  const effectiveWeek = currentSeasonType===0 ? (liveCurrentWeek || 0) : TEST_WEEK;
+  const effectiveWeek = liveCurrentWeek || 0;
   if(effectiveWeek < PLAYOFF_PICTURE_MIN_WEEK){
     document.getElementById('standingsContent').innerHTML = `<div class="loading">
       Playoff picture activates after Week ${PLAYOFF_PICTURE_MIN_WEEK} — too early in the season for seeding to mean much before then.
-      ${currentSeasonType===0 ? `Currently Week ${effectiveWeek||'?'}.` : ''}
+      ${effectiveWeek ? `Currently Week ${effectiveWeek}.` : ''}
     </div>`;
     return;
   }
@@ -1230,18 +1275,27 @@ let selectedScheduleWeek = null;
 async function loadSchedule(){
   try{
     if(selectedScheduleWeek===null){
-      selectedScheduleWeek = liveCurrentWeek || selectedScoresWeek || 1;
+      selectedScheduleWeek = currentScheduleSeason >= new Date().getFullYear()
+        ? (liveCurrentWeek || selectedScoresWeek || 1)
+        : 18;
     }
     populateWeekDropdown('scheduleWeekSelect', selectedScheduleWeek, 22);
-    const data = await jget(weekScoreboardUrl(selectedScheduleWeek));
+    const data = await jget(weekScoreboardUrl(selectedScheduleWeek, currentScheduleSeason));
     const events = data.events || [];
-    let html = `<div class="div-title">Week ${selectedScheduleWeek}</div>`;
+    let html = `<div class="div-title">Week ${selectedScheduleWeek} — ${currentScheduleSeason}</div>`;
     html += events.length ? `<div class="scores-grid">${events.map(scheduleRow).join('')}</div>` : '<div class="loading">No games found for this week.</div>';
     document.getElementById('scheduleContent').innerHTML = html;
   }catch(e){
     document.getElementById('scheduleContent').innerHTML = `<div class="err">Couldn't load schedule.</div>`;
   }
 }
+
+function changeScheduleSeason(season){
+  currentScheduleSeason = season;
+  selectedScheduleWeek = null;
+  loadSchedule();
+}
+window.changeScheduleSeason = changeScheduleSeason;
 
 function changeScheduleWeekTo(week){
   if(!week) return;
@@ -2519,7 +2573,7 @@ async function init(){
   await loadScores();
   loadStandings();
   loadSchedule();
-  setInterval(()=>{ if(currentSeasonType===0) loadScores(); }, 30000); // only auto-refresh in live mode
+  setInterval(()=>{ loadScores(); }, 30000);
 }
 init();
 </script>
