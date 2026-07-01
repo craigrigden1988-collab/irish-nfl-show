@@ -345,6 +345,9 @@ tr:hover td{background:var(--panel2);}
 .week-nav button{background:none;border:none;color:var(--orange);font-size:16px;font-weight:700;cursor:pointer;padding:2px 8px;border-radius:4px;}
 .week-nav button:hover{background:var(--panel);}
 .week-nav span{font-family:'Oswald',sans-serif;font-weight:600;font-size:13px;letter-spacing:0.5px;min-width:64px;text-align:center;}
+.sched-score{display:flex;align-items:center;gap:8px;font-family:'Oswald',sans-serif;font-size:20px;font-weight:700;}
+.sched-score .winner{color:var(--orange);}
+.week-select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--text);font-family:'Oswald',sans-serif;font-size:13px;cursor:pointer;}
 .game-meta{color:var(--muted);font-size:13px;padding:4px 0 0 0;display:flex;flex-direction:column;gap:2px;}
 
 .div-title{
@@ -547,11 +550,9 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   <div id="tab-scores" class="tabpane"><div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <h2 style="margin:0;">Scores</h2>
-      <div class="week-nav">
-        <button onclick="changeScoresWeek(-1)">‹</button>
-        <span id="scoresWeekLabel">Week —</span>
-        <button onclick="changeScoresWeek(1)">›</button>
-      </div>
+      <select id="scoresWeekSelect" class="week-select" onchange="changeScoresWeekTo(+this.value)">
+        <option value="">Week —</option>
+      </select>
     </div>
     <div id="scoresContent" class="loading">Loading…</div>
   </div></div>
@@ -566,11 +567,9 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   <div id="tab-schedule" class="tabpane" style="display:none"><div class="panel">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
       <h2 style="margin:0;">Schedule</h2>
-      <div class="week-nav">
-        <button onclick="changeScheduleWeek(-1)">‹</button>
-        <span id="scheduleWeekLabel">Week —</span>
-        <button onclick="changeScheduleWeek(1)">›</button>
-      </div>
+      <select id="scheduleWeekSelect" class="week-select" onchange="changeScheduleWeekTo(+this.value)">
+        <option value="">Week —</option>
+      </select>
     </div>
     <div id="scheduleContent" class="loading">Loading…</div>
   </div></div>
@@ -846,12 +845,25 @@ function weekScoreboardUrl(week){
   return `${API}/scoreboard?seasontype=2&week=${week}&dates=${year}`;
 }
 
+function populateWeekDropdown(selectId, currentWeek, maxWeek){
+  const sel = document.getElementById(selectId);
+  if(!sel) return;
+  sel.innerHTML = '';
+  for(let w=1; w<=maxWeek; w++){
+    const opt = document.createElement('option');
+    opt.value = w;
+    opt.textContent = `Week ${w}`;
+    if(w===currentWeek) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
 async function loadScores(){
   try{
     if(demoMode){
       if(!demoData) demoData = buildDemoData();
       if(selectedScoresWeek===null) selectedScoresWeek = TEST_WEEK;
-      document.getElementById('scoresWeekLabel').textContent = `Week ${selectedScoresWeek} 🧪`;
+      populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
       renderTicker(demoData.scores);
       renderScores(demoData.scores);
       return;
@@ -868,7 +880,7 @@ async function loadScores(){
     const data = await jget(weekScoreboardUrl(selectedScoresWeek));
     if(currentSeasonType===0 && data.week?.number) liveCurrentWeek = data.week.number;
     const events = data.events || [];
-    document.getElementById('scoresWeekLabel').textContent = `Week ${selectedScoresWeek}`;
+    populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
     renderTicker(events);
     renderScores(events);
   }catch(e){
@@ -877,12 +889,12 @@ async function loadScores(){
   }
 }
 
-function changeScoresWeek(delta){
-  const base = selectedScoresWeek===null ? TEST_WEEK : selectedScoresWeek;
-  selectedScoresWeek = Math.max(1, Math.min(22, base+delta));
+function changeScoresWeekTo(week){
+  if(!week) return;
+  selectedScoresWeek = week;
   loadScores();
 }
-window.changeScoresWeek = changeScoresWeek;
+window.changeScoresWeekTo = changeScoresWeekTo;
 
 function renderTicker(events){
   if(!events.length){
@@ -909,7 +921,8 @@ async function renderScores(events){
   const catLabel = {passingYards:'QB', rushingYards:'RB', receivingYards:'WR'};
   // ESPN's per-game leaders sometimes exposes a defensive category under one of these
   // names depending on the game/season — we check all of them and use whichever is present.
-  const defCatCandidates = ['sacks','defensiveInterceptions','totalTackles','soloTackles'];
+  // totalTackles first as it's the most consistently available.
+  const defCatCandidates = ['totalTackles','soloTackles','sacks','defensiveInterceptions','tacklesForLoss','passesDefended'];
   const performerLinesFor = (ev, comp, c1, c2)=>{
     if(demoMode){
       const homeAbbr = c1.team.abbreviation, awayAbbr = c2.team.abbreviation;
@@ -1111,9 +1124,8 @@ async function loadStandings(){
       renderStandingsView();
       return;
     }
-    const url = currentSeasonType===0
-      ? `${CORE}/standings?level=3`
-      : `${CORE}/standings?level=3&season=${currentSeason}&seasontype=${currentSeasonType}`;
+    // Always fetch current season standings — works even with 0 games played
+    const url = `${CORE}/standings?level=3&season=${TEST_SEASON}&seasontype=2`;
     standingsCache = await jget(url);
     renderStandingsView();
   }catch(e){
@@ -1255,7 +1267,7 @@ async function loadSchedule(){
     if(demoMode){
       if(!demoData) demoData = buildDemoData();
       if(selectedScheduleWeek===null) selectedScheduleWeek = TEST_WEEK;
-      document.getElementById('scheduleWeekLabel').textContent = `Week ${selectedScheduleWeek} 🧪`;
+      populateWeekDropdown('scheduleWeekSelect', selectedScheduleWeek, 22);
       let html = `<div class="div-title">Week ${selectedScheduleWeek} — Demo Data</div>`;
       html += `<div class="scores-grid">${demoData.scores.map(scheduleRow).join('')}</div>`;
       document.getElementById('scheduleContent').innerHTML = html;
@@ -1264,7 +1276,7 @@ async function loadSchedule(){
     if(selectedScheduleWeek===null){
       selectedScheduleWeek = currentSeasonType===0 ? (liveCurrentWeek || selectedScoresWeek || 1) : TEST_WEEK;
     }
-    document.getElementById('scheduleWeekLabel').textContent = `Week ${selectedScheduleWeek}`;
+    populateWeekDropdown('scheduleWeekSelect', selectedScheduleWeek, 22);
     const data = await jget(weekScoreboardUrl(selectedScheduleWeek));
     const events = data.events || [];
     const label = currentSeasonType===0 ? `Week ${selectedScheduleWeek}` : `Week ${selectedScheduleWeek} — ${currentSeason} Season`;
@@ -1276,12 +1288,12 @@ async function loadSchedule(){
   }
 }
 
-function changeScheduleWeek(delta){
-  const base = selectedScheduleWeek===null ? TEST_WEEK : selectedScheduleWeek;
-  selectedScheduleWeek = Math.max(1, Math.min(22, base+delta));
+function changeScheduleWeekTo(week){
+  if(!week) return;
+  selectedScheduleWeek = week;
   loadSchedule();
 }
-window.changeScheduleWeek = changeScheduleWeek;
+window.changeScheduleWeekTo = changeScheduleWeekTo;
 
 const STADIUM_COORDS = {
   ARI:{lat:33.5277,lng:-112.2626,indoor:false}, ATL:{lat:33.7554,lng:-84.4008,indoor:true},
@@ -1347,14 +1359,24 @@ async function fetchGameWeather(gameId, lat, lng, kickoff){
 function scheduleRow(ev){
   const comp = ev.competitions[0];
   const [c1,c2] = comp.competitors;
+  const final = comp.status.type.state === 'post';
+  const live = comp.status.type.state === 'in';
+  const showScore = final || live;
+  const scoreBlock = showScore
+    ? `<div class="sched-score">
+        <span class="${c1.winner?'winner':''}">${c1.score||0}</span>
+        <span style="color:var(--muted)">–</span>
+        <span class="${c2.winner?'winner':''}">${c2.score||0}</span>
+       </div>`
+    : '';
   return `<div class="game-card sched-card">
-    <div class="game-status" style="justify-content:center;">
-      <span>${comp.status.type.shortDetail}</span>
+    <div class="game-status ${live?'live':''}" style="justify-content:center;">
+      <span>${live?'● LIVE ':''} ${comp.status.type.shortDetail}</span>
     </div>
     <div class="sched-matchup">
       <span>${c1.team.shortDisplayName}</span>
       <img src="${c1.team.logo}" onerror="this.style.display='none'">
-      <span class="sched-at">@</span>
+      ${showScore ? scoreBlock : '<span class="sched-at">@</span>'}
       <img src="${c2.team.logo}" onerror="this.style.display='none'">
       <span>${c2.team.shortDisplayName}</span>
     </div>
@@ -1389,18 +1411,70 @@ async function loadTeams(retrying){
 
     el.innerHTML = `<div class="roster-grid">${teams.map((t,i)=>{
       const record = t.record?.items?.[0]?.summary || '';
-      return `<div class="player-tile" onclick="openTeam('${t.abbreviation}')">
-        <div class="player-tile-row">
-          <span style="color:var(--muted);font-size:12px;min-width:20px;">${i+1}</span>
-          ${teamLogoTag(t.abbreviation,22)}
-          <span class="player-name" style="flex:1;">${t.displayName}</span>
-          ${record ? `<span class="pos-tag">${record}</span>` : ''}
+      const abbr = t.abbreviation;
+      return `<div class="player-tile" style="cursor:pointer;padding:14px;" onclick="openTeam('${abbr}')">
+        <div class="player-tile-row" style="gap:12px;">
+          <span style="color:var(--muted);font-size:13px;min-width:22px;">${i+1}</span>
+          ${teamLogoTag(abbr, 36)}
+          <div style="flex:1;">
+            <div class="player-name" style="font-size:15px;">${t.displayName}</div>
+            ${record ? `<div style="color:var(--muted);font-size:12px;">${record}</div>` : ''}
+          </div>
+        </div>
+        <div id="tile-extras-${abbr}" style="margin-top:8px;font-size:12px;color:var(--muted);">
+          <span class="loading" style="font-size:11px;">Loading…</span>
         </div>
       </div>`;
     }).join('')}</div>`;
+
+    // Load last meeting + top performers async for each team (non-blocking)
+    teams.forEach(t=>loadTeamTileExtras(t.abbreviation));
   }catch(e){
     if(!retrying){ return loadTeams(true); }
     el.innerHTML = `<div class="err">Couldn't load teams. <button class="h2h-toggle" style="margin-top:8px;" onclick="loadTeams()">Retry</button></div>`;
+  }
+}
+
+async function loadTeamTileExtras(abbr){
+  const el = document.getElementById(`tile-extras-${abbr}`);
+  if(!el) return;
+  try{
+    // Top season performers from ESPN leaders cache
+    const categories = await fetchEspnLeaders(TEST_SEASON, 2).catch(()=>null);
+    let perfLines = [];
+    if(categories){
+      const topFor = (key, label)=>{
+        const rows = (categories[key]||[]).filter(r=>r.team===abbr);
+        if(!rows.length) return null;
+        return `<span class="perf-badge ${label.toLowerCase()}">${label}</span> ${rows[0].name} <span style="color:var(--orange)">${rows[0].displayValue}</span>`;
+      };
+      [['passingYards','QB'],['rushingYards','RB'],['receivingYards','WR'],['totalTackles','DEF']].forEach(([key,label])=>{
+        const line = topFor(key, label);
+        if(line) perfLines.push(line);
+      });
+    }
+
+    // Last meeting from H2H cache
+    const lastGames = await getLastMeetings(abbr, null, 1).catch(()=>[]);
+    let lastMeetingHtml = '';
+    if(lastGames.length){
+      const g = lastGames[0];
+      const opp = g.home_team===abbr ? g.away_team : g.home_team;
+      const homeScore = g.home_score, awayScore = g.away_score;
+      const teamScore = g.home_team===abbr ? homeScore : awayScore;
+      const oppScore = g.home_team===abbr ? awayScore : homeScore;
+      const result = teamScore > oppScore ? 'W' : teamScore < oppScore ? 'L' : 'T';
+      const resultColor = result==='W'?'var(--green)':result==='L'?'#e74c3c':'var(--muted)';
+      lastMeetingHtml = `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+        <span style="color:var(--muted)">Last game: </span>${teamLogoTag(opp,14)}${opp} 
+        <span style="color:${resultColor};font-weight:700;">${result} ${teamScore}–${oppScore}</span>
+        <span style="color:var(--muted)"> (${g.gameday?.slice(0,4)||''})</span>
+      </div>`;
+    }
+
+    el.innerHTML = (perfLines.length ? `<div style="display:flex;flex-direction:column;gap:3px;">${perfLines.map(l=>`<div>${l}</div>`).join('')}</div>` : '') + lastMeetingHtml;
+  }catch(e){
+    el.innerHTML = '';
   }
 }
 
@@ -1671,17 +1745,33 @@ function renderInjuryItems(el, items, isDemo){
     el.innerHTML = '<div class="loading">No reported injuries for this team right now.</div>';
     return;
   }
-  let html = `<table><thead><tr><th>Player</th><th>Position</th><th>Status</th><th>Injury</th><th>Details</th></tr></thead><tbody>`;
-  items.forEach(it=>{
+  // Sort by most recent date first
+  const sorted = items.slice().sort((a,b)=>{
+    return new Date(b.date||0) - new Date(a.date||0);
+  });
+  const statusColor = (s)=> /out/i.test(s) ? '#e74c3c' : /quest|doubt/i.test(s) ? 'var(--orange)' : /probable/i.test(s) ? 'var(--green)' : 'var(--muted)';
+  let html = `<div class="roster-grid">`;
+  sorted.forEach(it=>{
     const name = it.athlete?.displayName || it.athlete?.name || '—';
     const pos = it.athlete?.position?.abbreviation || '-';
     const status = it.status || it.type?.description || '-';
-    const injury = it.details?.type || it.shortComment || '-';
-    const detail = it.longComment || it.details?.detail || '-';
-    const statusColor = /out/i.test(status) ? 'var(--red)' : /quest|doubt/i.test(status) ? 'var(--orange)' : 'var(--muted)';
-    html += `<tr><td>${name}</td><td>${pos}</td><td style="color:${statusColor};font-weight:600;">${status}</td><td>${injury}</td><td style="color:var(--muted);font-size:12px;">${detail}</td></tr>`;
+    const injuryType = it.details?.type || '-';
+    const detail = it.shortComment || it.details?.detail || '';
+    const returnDate = it.details?.returnDate ? new Date(it.details.returnDate).toLocaleDateString('en-IE',{day:'numeric',month:'short',year:'numeric'}) : null;
+    html += `<div class="player-tile" style="padding:12px;">
+      <div class="player-tile-row">
+        <span class="player-name">${name}</span>
+        <span class="pos-tag">${pos}</span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span style="color:${statusColor(status)};font-weight:700;font-size:12px;">${status}</span>
+        <span style="color:var(--muted);font-size:12px;">${injuryType}</span>
+      </div>
+      ${detail ? `<div style="color:var(--muted);font-size:11px;margin-top:4px;line-height:1.4;">${detail.slice(0,120)}${detail.length>120?'…':''}</div>` : ''}
+      ${returnDate ? `<div style="color:var(--orange);font-size:11px;margin-top:4px;">Est. return: ${returnDate}</div>` : ''}
+    </div>`;
   });
-  html += `</tbody></table>`;
+  html += `</div>`;
   if(isDemo) html += `<div class="src-note">🧪 Demo data — randomly generated.</div>`;
   el.innerHTML = html;
 }
