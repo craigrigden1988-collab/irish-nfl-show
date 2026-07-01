@@ -622,7 +622,14 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   </div>
   <div id="tab-playerstats" class="tabpane" style="display:none">
     <div class="panel">
-      <h2>Current Season Stats — 2025 season, sourced from ESPN</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        <h2 style="margin:0;">Current Season Stats</h2>
+        <select id="statsSeasonSelect" class="week-select" onchange="changeStatsSeason(+this.value)">
+          <option value="2026" selected>2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+        </select>
+      </div>
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
         <button class="stat-cat active" data-cat="passing" onclick="selectStatCat('passing')">Passing</button>
         <button class="stat-cat" data-cat="rushing" onclick="selectStatCat('rushing')">Rushing</button>
@@ -632,7 +639,7 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <button class="stat-cat" data-cat="punting" onclick="selectStatCat('punting')">Punting</button>
       </div>
       <div id="playerStatsContent" class="loading">Loading…</div>
-      <h2 style="margin-top:24px;">2025 Season Highs</h2>
+      <h2 style="margin-top:24px;" id="seasonHighsTitle">Season Highs</h2>
       <div id="seasonHighs" class="loading">Loading…</div>
     </div>
   </div>
@@ -1885,6 +1892,7 @@ window.runComparison = runComparison;
 
 // ---------- PLAYER STATS ----------
 let currentStatCat = 'passing';
+let currentStatsSeason = 2026;
 let statTableRows = [];
 let statSortKey = null;
 let statSortAsc = false;
@@ -1963,47 +1971,47 @@ async function fetchEspnLeaders(season, seasontype){
   return categories;
 }
 
-// Multi-column stat tab config.
-// primary: the ESPN category used to rank the top 25 players.
-// cols: ESPN category keys. Stats not in ESPN's leaders (drops, missed tackles, penalties)
-// will show — naturally — ESPN simply doesn't publish those as league-wide leader categories.
+// ESPN leaders endpoint only publishes stats it ranks as "leaders" — not every stat exists
+// as a category. Keys confirmed working: passingYards, passingTouchdowns, rushingYards,
+// rushingTouchdowns, receivingYards, receptions, sacks, totalTackles, defensiveInterceptions.
+// Keys that return — (not in ESPN leaders): passingAttempts, completions, completionPct,
+// QBRating, interceptions (thrown), yardsPerRushAttempt, receivingTargets, yardsPerReception etc.
+// We keep them in the config and they show — honestly rather than hiding the column.
 const STAT_TAB_CONFIG = {
   passing: {
     label: 'Passing',
     primary: 'passingYards',
     cols: [
-      {key:'passingAttempts',   label:'ATT'},
-      {key:'completions',       label:'CMP'},
-      {key:'completionPct',     label:'CMP%'},
       {key:'passingYards',      label:'YDS'},
       {key:'passingTouchdowns', label:'TD'},
-      {key:'interceptions',     label:'INT'},
       {key:'QBRating',          label:'RTG'},
+      {key:'completionPct',     label:'CMP%'},
+      {key:'passingAttempts',   label:'ATT'},
+      {key:'completions',       label:'CMP'},
+      {key:'interceptions',     label:'INT'},
     ]
   },
   rushing: {
     label: 'Rushing',
     primary: 'rushingYards',
     cols: [
-      {key:'rushingAttempts',      label:'ATT'},
       {key:'rushingYards',         label:'YDS'},
       {key:'rushingTouchdowns',    label:'TD'},
+      {key:'rushingAttempts',      label:'ATT'},
       {key:'yardsPerRushAttempt',  label:'YPA'},
       {key:'longRushing',          label:'LNG'},
-      {key:'rushingYardsAfterContact', label:'YAC'},  // proxy for missed tackles — ESPN may not expose
     ]
   },
   receiving: {
     label: 'Receiving',
     primary: 'receivingYards',
     cols: [
-      {key:'receivingTargets',     label:'TGT'},
-      {key:'receptions',           label:'REC'},
       {key:'receivingYards',       label:'YDS'},
       {key:'receivingTouchdowns',  label:'TD'},
+      {key:'receptions',           label:'REC'},
       {key:'yardsPerReception',    label:'AVG'},
+      {key:'receivingTargets',     label:'TGT'},
       {key:'longReception',        label:'LNG'},
-      {key:'drops',                label:'DROPS'},  // ESPN may not expose
     ]
   },
   defense: {
@@ -2016,7 +2024,6 @@ const STAT_TAB_CONFIG = {
       {key:'forcedFumbles',            label:'FF'},
       {key:'defensiveInterceptions',   label:'INT'},
       {key:'passesDefended',           label:'PD'},
-      {key:'penalties',                label:'PEN'},  // ESPN may not expose
     ]
   },
   kicking: {
@@ -2050,6 +2057,18 @@ async function loadPlayerStats(){
   loadSeasonHighs();
 }
 
+function changeStatsSeason(season){
+  currentStatsSeason = season;
+  espnLeadersCache = null; // bust cache so new season loads fresh
+  statSortKey = null;
+  statSortAsc = false;
+  statTableRows = [];
+  const title = document.getElementById('seasonHighsTitle');
+  if(title) title.textContent = `${season} Season Highs`;
+  loadPlayerStats();
+}
+window.changeStatsSeason = changeStatsSeason;
+
 function selectStatCat(cat){
   currentStatCat = cat;
   statSortKey = null;
@@ -2068,9 +2087,9 @@ async function renderStatCat(cat){
 
 
   try{
-    const categories = await fetchEspnLeaders(TEST_SEASON, 2);
-
-    // Build lookup maps: "Name|TEAM" → {displayValue, numericValue}
+    const categories = await fetchEspnLeaders(currentStatsSeason, 2);
+    // Log available keys on first load so we know exactly what ESPN returns
+    if(!window._espnCatsLogged){ console.log('ESPN leaders keys:', Object.keys(categories)); window._espnCatsLogged = true; }
     const lookups = {};
     tabInfo.cols.forEach(col=>{
       const map = {};
@@ -2158,7 +2177,7 @@ function renderStatsTableHTML(tabInfo, el){
   });
 
   html += `</tbody></table></div>
-    <div class="src-note">Source: ESPN — ${TEST_SEASON} regular season leaders. Click any column header to sort. A — means the player didn't appear in that stat's top leaders.</div>`;
+    <div class="src-note">Source: ESPN — ${currentStatsSeason} regular season leaders. Click any column header to sort. Columns showing — aren't published as leader categories by ESPN.</div>`;
   el.innerHTML = html;
 }
 
@@ -2287,7 +2306,7 @@ async function renderAllTimeRecords(){
   el.innerHTML = '<div class="loading">Loading…</div>';
 
   let categories = {};
-  try{ categories = await fetchEspnLeaders(TEST_SEASON, 2); }catch(e){}
+  try{ categories = await fetchEspnLeaders(currentStatsSeason, 2); }catch(e){}
 
   const currentSeasonLine = (r)=>{
     if(!r.key) return null;
@@ -2326,39 +2345,22 @@ async function loadRecords(){
 
 async function loadSeasonHighs(){
   const el = document.getElementById('seasonHighs');
-  el.innerHTML = '<div class="loading">Loading 2025 season highs…</div>';
-
-  // shared tie/runner-up/third-place logic, works on any array of {name,team,value}
-  const topTiedPlusRunnerUp = (rows)=>{
-    if(!rows.length) return {leaders:[], runnerUp:null, thirdPlace:null};
-    rows = rows.slice().sort((a,b)=>(b.value||0)-(a.value||0));
-    const maxVal = rows[0].value;
-    const leaders = rows.filter(r=>r.value===maxVal);
-    let runnerUp = null, thirdPlace = null;
-    if(leaders.length===1){
-      const rest = rows.filter(r=>r.value!==maxVal);
-      if(rest.length){
-        runnerUp = rest[0];
-        const rest2 = rest.filter(r=>r.value!==runnerUp.value);
-        const runnerUpTiedCount = rest.filter(r=>r.value===runnerUp.value).length;
-        if(runnerUpTiedCount===1 && rest2.length) thirdPlace = rest2[0];
-      }
-    }
-    return {leaders, runnerUp, thirdPlace};
-  };
+  el.innerHTML = `<div class="loading">Loading ${currentStatsSeason} season highs…</div>`;
 
   const renderCards = (cardDefs, sourceNote)=>{
     let html = `<div class="scores-grid">`;
     cardDefs.forEach(([label, rows])=>{
-      const {leaders, runnerUp, thirdPlace} = topTiedPlusRunnerUp(rows);
-      if(!leaders.length) return;
-      const namesHtml = leaders.map(r=>`<div class="season-high-name-row">${teamLogoTag(r.team)}${r.name} <span class="muted">(${r.team||'-'})</span></div>`).join('');
-      const runnerUpHtml = runnerUp ? `<div class="season-high-runner-up">2nd: ${teamLogoTag(runnerUp.team)}${runnerUp.name} <span class="muted">(${runnerUp.team||'-'}) — ${runnerUp.displayValue ?? runnerUp.value}</span></div>` : '';
-      const thirdPlaceHtml = thirdPlace ? `<div class="season-high-runner-up">3rd: ${teamLogoTag(thirdPlace.team)}${thirdPlace.name} <span class="muted">(${thirdPlace.team||'-'}) — ${thirdPlace.displayValue ?? thirdPlace.value}</span></div>` : '';
+      if(!rows.length) return;
+      const sorted = rows.slice().sort((a,b)=>(b.value||0)-(a.value||0));
+      const top = sorted[0];
+      const restHtml = sorted.slice(1).map((r,i)=>
+        `<div class="season-high-runner-up">${i+2}. ${teamLogoTag(r.team)}${r.name} <span class="muted">(${r.team||'-'}) — ${r.displayValue ?? r.value}</span></div>`
+      ).join('');
       html += `<div class="game-card">
-        <div class="game-status"><span>${label.toUpperCase()}${leaders.length>1?' — TIED':''}</span><span>2025</span></div>
-        <div class="season-high-value">${leaders[0].displayValue ?? leaders[0].value}</div>
-        ${namesHtml}${runnerUpHtml}${thirdPlaceHtml}
+        <div class="game-status"><span>${label.toUpperCase()}</span><span>${currentStatsSeason}</span></div>
+        <div class="season-high-value">${top.displayValue ?? top.value}</div>
+        <div class="season-high-name-row">${teamLogoTag(top.team)}${top.name} <span class="muted">(${top.team||'-'})</span></div>
+        ${restHtml}
       </div>`;
     });
     html += `</div><div class="src-note">${sourceNote}</div>`;
@@ -2366,8 +2368,8 @@ async function loadSeasonHighs(){
   };
 
   try{
-    const categories = await fetchEspnLeaders(TEST_SEASON, 2);
-    const toRows = (catKey)=> (categories[catKey]||[]).map(r=>({name:r.name, team:r.team, value:r.value, displayValue:r.displayValue}));
+    const categories = await fetchEspnLeaders(currentStatsSeason, 2);
+    const toRows = (catKey)=> (categories[catKey]||[]).slice(0,10).map(r=>({name:r.name, team:r.team, value:r.value, displayValue:r.displayValue}));
     renderCards([
       ['Passing yards', toRows('passingYards')],
       ['Passing TDs', toRows('passingTouchdowns')],
@@ -2377,7 +2379,7 @@ async function loadSeasonHighs(){
       ['Receptions', toRows('receptions')],
       ['Sacks', toRows('sacks')],
       ['Interceptions', toRows('defensiveInterceptions')],
-    ], 'Source: ESPN — leading 2025 regular season figures.');
+    ], `Source: ESPN — ${currentStatsSeason} regular season leaders, top 10 shown per category.`);
   }catch(e){
     el.innerHTML = `<div class="err">Couldn't load season highs right now. Try refreshing.</div>`;
   }
