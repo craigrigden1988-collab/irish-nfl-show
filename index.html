@@ -553,7 +553,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <select id="scoresSeasonSelect" class="week-select" onchange="changeScoresSeason(+this.value)">
           <option value="2026" selected>2026</option>
           <option value="2025">2025</option>
-          <option value="2024">2024</option>
         </select>
         <select id="scoresWeekSelect" class="week-select" onchange="changeScoresWeekTo(+this.value)">
           <option value="">Week —</option>
@@ -568,7 +567,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
       <select id="standingsSeasonSelect" class="week-select" onchange="changeStandingsSeason(+this.value)">
         <option value="2026" selected>2026</option>
         <option value="2025">2025</option>
-        <option value="2024">2024</option>
       </select>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
@@ -584,7 +582,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <select id="scheduleSeasonSelect" class="week-select" onchange="changeScheduleSeason(+this.value)">
           <option value="2026" selected>2026</option>
           <option value="2025">2025</option>
-          <option value="2024">2024</option>
         </select>
         <select id="scheduleWeekSelect" class="week-select" onchange="changeScheduleWeekTo(+this.value)">
           <option value="">Week —</option>
@@ -627,7 +624,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <select id="statsSeasonSelect" class="week-select" onchange="changeStatsSeason(+this.value)">
           <option value="2026" selected>2026</option>
           <option value="2025">2025</option>
-          <option value="2024">2024</option>
         </select>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
@@ -635,7 +631,7 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <button class="stat-cat" data-cat="rushing" onclick="selectStatCat('rushing')">Rushing</button>
         <button class="stat-cat" data-cat="receiving" onclick="selectStatCat('receiving')">Receiving</button>
         <button class="stat-cat" data-cat="defense" onclick="selectStatCat('defense')">Defense</button>
-        <button class="stat-cat" data-cat="kicking" onclick="selectStatCat('kicking')">Field Goals</button>
+        <button class="stat-cat" data-cat="scoring" onclick="selectStatCat('scoring')">Scoring</button>
         <button class="stat-cat" data-cat="punting" onclick="selectStatCat('punting')">Punting</button>
       </div>
       <div id="playerStatsContent" class="loading">Loading…</div>
@@ -707,7 +703,7 @@ function teamLogoTag(abbr, size){
 // no server required.
 // ============================================================
 const IDB_NAME = 'irishNflShowDB';
-const IDB_VERSION = 2;
+const IDB_VERSION = 3;
 let idbInstance = null;
 
 function openIDB(){
@@ -721,6 +717,7 @@ function openIDB(){
       if(!db.objectStoreNames.contains('career')) db.createObjectStore('career', {keyPath:'player_id'});
       if(!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', {keyPath:'game_id'});
       if(!db.objectStoreNames.contains('pinned')) db.createObjectStore('pinned', {keyPath:'game_id'});
+      if(!db.objectStoreNames.contains('nflverse')) db.createObjectStore('nflverse', {keyPath:'key'});
     };
     req.onsuccess = (e)=>{ idbInstance = e.target.result; resolve(idbInstance); };
     req.onerror = (e)=>reject(e.target.error);
@@ -795,30 +792,40 @@ setClock(); setInterval(setClock,1000*30);
 // In production this is the same domain as the app so no CORS issues
 const WORKER_URL = '';
 
+const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 min for ESPN responses in sessionStorage
+
 async function jget(url){
-  // If running on localhost, try direct fetch first then public proxies
-  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  if(isLocal){
-    try{
-      const r = await fetch(url);
-      if(r.ok) return r.json();
-    }catch(e){}
-    // local fallback proxies
-    for(const makeUrl of [
-      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    ]){
-      try{
-        const r = await fetch(makeUrl(url));
-        if(r.ok) return r.json();
-      }catch(e){}
+  // Serve from sessionStorage if fresh — avoids repeat proxy calls within the same session
+  try{
+    const cached = sessionStorage.getItem('jget:' + url);
+    if(cached){
+      const {data, ts} = JSON.parse(cached);
+      if(Date.now() - ts < SESSION_CACHE_TTL) return data;
     }
-    throw new Error('All local fetch attempts failed for '+url);
+  }catch(e){}
+
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  let result;
+  if(isLocal){
+    try{ const r = await fetch(url); if(r.ok) result = await r.json(); }catch(e){}
+    if(!result){
+      for(const makeUrl of [
+        u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+        u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      ]){
+        try{ const r = await fetch(makeUrl(url)); if(r.ok){ result = await r.json(); break; } }catch(e){}
+      }
+    }
+    if(!result) throw new Error('All local fetch attempts failed for '+url);
+  } else {
+    const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
+    if(!r.ok) throw new Error(`Proxy error ${r.status} for ${url}`);
+    result = await r.json();
   }
-  // Production (Netlify): /proxy is the Edge Function on the same domain — no CORS, cached
-  const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
-  if(!r.ok) throw new Error(`Proxy error ${r.status} for ${url}`);
-  return r.json();
+
+  // Cache to sessionStorage (expires with tab close or TTL)
+  try{ sessionStorage.setItem('jget:' + url, JSON.stringify({data: result, ts: Date.now()})); }catch(e){}
+  return result;
 }
 
 // ---------- TABS ----------
@@ -1944,110 +1951,223 @@ function csvFromUrl(url){
   });
 }
 
-// ---------- CURRENT SEASON STATS (ESPN leaders — same reliable domain as the rest of the app) ----------
-const ESPN_LEADERS_URL = 'https://site.api.espn.com/apis/site/v3/sports/football/nfl/leaders';
-let espnLeadersCache = null; // {key:'season_seasontype', categories:{name:[...]}}
+// ---------- NFLVERSE SEASON STATS (replaces ESPN leaders for all stat displays) ----------
+// nflverse has full per-player per-week CSVs covering every meaningful stat.
+// We fetch once per season, aggregate into per-player season totals, and cache.
 
-async function fetchEspnLeaders(season, seasontype){
-  const key = `${season}_${seasontype}`;
-  if(espnLeadersCache && espnLeadersCache.key === key) return espnLeadersCache.categories;
-  const data = await jget(`${ESPN_LEADERS_URL}?season=${season}&seasontype=${seasontype}`);
-  const rawCategories = data.leaders?.categories || data.categories
-    || (Array.isArray(data.leaders) ? data.leaders[0]?.categories : null) || [];
-  const categories = {};
-  rawCategories.forEach(cat=>{
-    const name = cat.name || cat.abbreviation;
-    if(!name) return;
-    categories[name] = (cat.leaders||[]).map((l,i)=>({
-      rank: i+1,
-      name: l.athlete?.displayName || l.athlete?.shortName || '—',
-      team: l.athlete?.team?.abbreviation || l.team?.abbreviation || '',
-      position: l.athlete?.position?.abbreviation || '',
-      value: l.value,
-      displayValue: l.displayValue
-    }));
-  });
-  espnLeadersCache = {key, categories};
-  return categories;
+let nflverseSeasonCache = null; // { season, offense: [], defense: [] }
+
+function nflverseOffenseUrls(season){
+  return [
+    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_season_${season}.csv`,
+  ];
 }
 
-// ESPN leaders endpoint only publishes stats it ranks as "leaders" — not every stat exists
-// as a category. Keys confirmed working: passingYards, passingTouchdowns, rushingYards,
-// rushingTouchdowns, receivingYards, receptions, sacks, totalTackles, defensiveInterceptions.
-// Keys that return — (not in ESPN leaders): passingAttempts, completions, completionPct,
-// QBRating, interceptions (thrown), yardsPerRushAttempt, receivingTargets, yardsPerReception etc.
-// We keep them in the config and they show — honestly rather than hiding the column.
+function nflverseDefenseUrls(season){
+  return [
+    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_def_${season}.csv`,
+  ];
+}
+
+const NFLVERSE_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+async function loadNflverseSeason(season){
+  if(nflverseSeasonCache?.season === season) return nflverseSeasonCache;
+
+  // Check IndexedDB first — avoids hitting the proxy on every page load
+  try{
+    const db = await openIDB();
+    const cached = await new Promise((res,rej)=>{
+      const tx = db.transaction('nflverse','readonly').objectStore('nflverse').get(String(season));
+      tx.onsuccess = e => res(e.target.result);
+      tx.onerror = e => rej(e.target.error);
+    });
+    if(cached && (Date.now() - cached.ts) < NFLVERSE_CACHE_TTL){
+      nflverseSeasonCache = { season, offense: cached.offense, defense: cached.defense };
+      return nflverseSeasonCache;
+    }
+  }catch(e){ /* fall through to fetch */ }
+
+  const el = document.getElementById('playerStatsContent');
+  if(el) el.innerHTML = '<div class="loading">Fetching nflverse stats (first load — cached after this)…</div>';
+
+  // Fetch offense CSV
+  let offenseRows = null;
+  for(const url of nflverseOffenseUrls(season)){
+    try{ offenseRows = await csvFromUrl(url); break; }catch(e){}
+  }
+  // Fetch defense CSV
+  let defenseRows = null;
+  for(const url of nflverseDefenseUrls(season)){
+    try{ defenseRows = await csvFromUrl(url); break; }catch(e){}
+  }
+
+  const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
+  const defense = defenseRows ? aggregateNflverseDefense(defenseRows) : [];
+
+  // Persist to IndexedDB so next load is instant
+  try{
+    const db = await openIDB();
+    await new Promise((res,rej)=>{
+      const tx = db.transaction('nflverse','readwrite').objectStore('nflverse').put({key: String(season), offense, defense, ts: Date.now()});
+      tx.onsuccess = res; tx.onerror = rej;
+    });
+  }catch(e){ /* non-fatal */ }
+
+  nflverseSeasonCache = { season, offense, defense };
+  return nflverseSeasonCache;
+}
+
+function aggregateNflverseOffense(rows){
+  const map = {};
+  // Only regular season
+  rows.filter(r=>r && r.player_id && (r.season_type==='REG' || !r.season_type)).forEach(r=>{
+    const id = r.player_id;
+    if(!map[id]){
+      map[id] = {
+        player_id: id,
+        player_display_name: r.player_display_name || r.player_name || id,
+        position: r.position || '',
+        recent_team: r.recent_team || r.team || '',
+        games: 0,
+        completions:0, attempts:0, passing_yards:0, passing_tds:0,
+        interceptions:0, sacks:0, passing_air_yards:0, passing_yards_after_catch:0,
+        passing_first_downs:0, passing_epa:0,
+        carries:0, rushing_yards:0, rushing_tds:0,
+        rushing_first_downs:0, rushing_fumbles:0, rushing_epa:0,
+        receptions:0, targets:0, receiving_yards:0, receiving_tds:0,
+        receiving_air_yards:0, receiving_yards_after_catch:0,
+        receiving_first_downs:0, receiving_epa:0, receiving_fumbles:0,
+        special_teams_tds:0,
+      };
+    }
+    const p = map[id];
+    if(Number(r.attempts)||0 > 0 || Number(r.carries)||0 > 0 || Number(r.targets)||0 > 0) p.games++;
+    ['completions','attempts','passing_yards','passing_tds','interceptions','sacks',
+     'passing_air_yards','passing_yards_after_catch','passing_first_downs','passing_epa',
+     'carries','rushing_yards','rushing_tds','rushing_first_downs','rushing_fumbles','rushing_epa',
+     'receptions','targets','receiving_yards','receiving_tds','receiving_air_yards',
+     'receiving_yards_after_catch','receiving_first_downs','receiving_epa','receiving_fumbles',
+     'special_teams_tds'
+    ].forEach(f=>{ p[f] += Number(r[f])||0; });
+    // Keep most recent team
+    if(r.recent_team) p.recent_team = r.recent_team;
+  });
+  // Compute derived fields
+  return Object.values(map).map(p=>{
+    p.cmp_pct = p.attempts>0 ? (p.completions/p.attempts*100).toFixed(1) : null;
+    p.ypc = p.carries>0 ? (p.rushing_yards/p.carries).toFixed(1) : null;
+    p.ypr = p.receptions>0 ? (p.receiving_yards/p.receptions).toFixed(1) : null;
+    p.total_tds = p.passing_tds + p.rushing_tds + p.receiving_tds + (p.special_teams_tds||0);
+    if(p.attempts >= 1){
+      const a = Math.min(Math.max((p.completions/p.attempts - 0.3)*5, 0), 2.375);
+      const b = Math.min(Math.max((p.passing_yards/p.attempts - 3)*0.25, 0), 2.375);
+      const c = Math.min(Math.max(p.passing_tds/p.attempts*20, 0), 2.375);
+      const d = Math.min(Math.max(2.375 - p.interceptions/p.attempts*25, 0), 2.375);
+      p.passer_rating = ((a+b+c+d)/6*100).toFixed(1);
+    }
+    return p;
+  });
+}
+
+function aggregateNflverseDefense(rows){
+  const map = {};
+  rows.filter(r=>r && r.player_id && (r.season_type==='REG' || !r.season_type)).forEach(r=>{
+    const id = r.player_id;
+    if(!map[id]){
+      map[id] = {
+        player_id: id,
+        player_display_name: r.player_display_name || r.player_name || id,
+        position: r.position || '',
+        recent_team: r.recent_team || r.team || '',
+        def_tackles:0, def_tackles_solo:0, def_tackle_assists:0,
+        def_tackles_for_loss:0, def_tackles_for_loss_yards:0,
+        def_fumbles_forced:0, def_sacks:0, def_sack_yards:0,
+        def_qb_hits:0, def_interceptions:0, def_interception_yards:0,
+        def_pass_defended:0, def_tds:0, def_fumbles:0, def_safety:0,
+      };
+    }
+    const p = map[id];
+    ['def_tackles','def_tackles_solo','def_tackle_assists',
+     'def_tackles_for_loss','def_tackles_for_loss_yards',
+     'def_fumbles_forced','def_sacks','def_sack_yards',
+     'def_qb_hits','def_interceptions','def_interception_yards',
+     'def_pass_defended','def_tds','def_fumbles','def_safety',
+    ].forEach(f=>{ p[f] += Number(r[f])||0; });
+    if(r.recent_team) p.recent_team = r.recent_team;
+  });
+  return Object.values(map);
+}
+
+// Stat tab config — now mapped to nflverse field names
 const STAT_TAB_CONFIG = {
   passing: {
-    label: 'Passing',
-    primary: 'passingYards',
+    label: 'Passing', source: 'offense', primary: 'passing_yards',
+    posFilter: ['QB'],
     cols: [
-      {key:'passingYards',      label:'YDS'},
-      {key:'passingTouchdowns', label:'TD'},
-      {key:'QBRating',          label:'RTG'},
-      {key:'completionPct',     label:'CMP%'},
-      {key:'passingAttempts',   label:'ATT'},
-      {key:'completions',       label:'CMP'},
-      {key:'interceptions',     label:'INT'},
+      {key:'attempts',                  label:'ATT'},
+      {key:'completions',               label:'CMP'},
+      {key:'cmp_pct',                   label:'CMP%'},
+      {key:'passing_yards',             label:'YDS'},
+      {key:'passing_tds',               label:'TD'},
+      {key:'interceptions',             label:'INT'},
+      {key:'passer_rating',             label:'RTG'},
+      {key:'sacks',                     label:'SACK'},
+      {key:'passing_air_yards',         label:'AIR YDS'},
     ]
   },
   rushing: {
-    label: 'Rushing',
-    primary: 'rushingYards',
+    label: 'Rushing', source: 'offense', primary: 'rushing_yards',
+    posFilter: null,
     cols: [
-      {key:'rushingYards',         label:'YDS'},
-      {key:'rushingTouchdowns',    label:'TD'},
-      {key:'rushingAttempts',      label:'ATT'},
-      {key:'yardsPerRushAttempt',  label:'YPA'},
-      {key:'longRushing',          label:'LNG'},
+      {key:'carries',                   label:'ATT'},
+      {key:'rushing_yards',             label:'YDS'},
+      {key:'rushing_tds',               label:'TD'},
+      {key:'ypc',                       label:'YPC'},
+      {key:'rushing_first_downs',       label:'1ST'},
+      {key:'rushing_fumbles',           label:'FUM'},
     ]
   },
   receiving: {
-    label: 'Receiving',
-    primary: 'receivingYards',
+    label: 'Receiving', source: 'offense', primary: 'receiving_yards',
+    posFilter: null,
     cols: [
-      {key:'receivingYards',       label:'YDS'},
-      {key:'receivingTouchdowns',  label:'TD'},
-      {key:'receptions',           label:'REC'},
-      {key:'yardsPerReception',    label:'AVG'},
-      {key:'receivingTargets',     label:'TGT'},
-      {key:'longReception',        label:'LNG'},
+      {key:'targets',                   label:'TGT'},
+      {key:'receptions',                label:'REC'},
+      {key:'receiving_yards',           label:'YDS'},
+      {key:'receiving_tds',             label:'TD'},
+      {key:'ypr',                       label:'AVG'},
+      {key:'receiving_air_yards',       label:'AIR YDS'},
+      {key:'receiving_yards_after_catch',label:'YAC'},
+      {key:'receiving_first_downs',     label:'1ST'},
     ]
   },
   defense: {
-    label: 'Defense',
-    primary: 'totalTackles',
+    label: 'Defense', source: 'defense', primary: 'def_tackles',
+    posFilter: null,
     cols: [
-      {key:'totalTackles',             label:'TKL'},
-      {key:'sacks',                    label:'SACK'},
-      {key:'tacklesForLoss',           label:'TFL'},
-      {key:'forcedFumbles',            label:'FF'},
-      {key:'defensiveInterceptions',   label:'INT'},
-      {key:'passesDefended',           label:'PD'},
+      {key:'def_tackles',               label:'TKL'},
+      {key:'def_tackles_solo',          label:'SOLO'},
+      {key:'def_sacks',                 label:'SACK'},
+      {key:'def_tackles_for_loss',      label:'TFL'},
+      {key:'def_fumbles_forced',        label:'FF'},
+      {key:'def_interceptions',         label:'INT'},
+      {key:'def_pass_defended',         label:'PD'},
+      {key:'def_qb_hits',               label:'QB HIT'},
     ]
   },
-  kicking: {
-    label: 'Field Goals',
-    primary: 'fieldGoalsMade',
+  scoring: {
+    label: 'Scoring', source: 'offense', primary: 'total_tds',
+    posFilter: null,
     cols: [
-      {key:'fieldGoalsMade',      label:'FGM'},
-      {key:'fieldGoalAttempts',   label:'FGA'},
-      {key:'fieldGoalPct',        label:'FG%'},
-      {key:'longFieldGoal',       label:'LNG'},
-      {key:'extraPointsMade',     label:'XPM'},
-      {key:'extraPointAttempts',  label:'XPA'},
-    ]
-  },
-  punting: {
-    label: 'Punting',
-    primary: 'puntYards',
-    cols: [
-      {key:'punts',           label:'PUNTS'},
-      {key:'puntYards',       label:'YDS'},
-      {key:'yardsPerPunt',    label:'AVG'},
-      {key:'longPunt',        label:'LNG'},
-      {key:'puntsInside20',   label:'IN 20'},
-      {key:'touchbacks',      label:'TB'},
+      {key:'total_tds',                 label:'TD'},
+      {key:'passing_tds',               label:'PASS TD'},
+      {key:'rushing_tds',               label:'RUSH TD'},
+      {key:'receiving_tds',             label:'REC TD'},
+      {key:'special_teams_tds',         label:'ST TD'},
     ]
   },
 };
@@ -2059,10 +2179,9 @@ async function loadPlayerStats(){
 
 function changeStatsSeason(season){
   currentStatsSeason = season;
-  espnLeadersCache = null; // bust cache so new season loads fresh
-  statSortKey = null;
-  statSortAsc = false;
-  statTableRows = [];
+  nflverseSeasonCache = null; // bust cache for new season
+  espnLeadersCache = null;
+  statSortKey = null; statSortAsc = false; statTableRows = [];
   const title = document.getElementById('seasonHighsTitle');
   if(title) title.textContent = `${season} Season Highs`;
   loadPlayerStats();
@@ -2081,49 +2200,56 @@ window.selectStatCat = selectStatCat;
 
 async function renderStatCat(cat){
   const el = document.getElementById('playerStatsContent');
-  el.innerHTML = '<div class="loading">Loading…</div>';
+  el.innerHTML = '<div class="loading">Loading nflverse stats…</div>';
   const tabInfo = STAT_TAB_CONFIG[cat];
   if(!tabInfo){ el.innerHTML = '<div class="loading">No data for this category.</div>'; return; }
 
-
   try{
-    const categories = await fetchEspnLeaders(currentStatsSeason, 2);
-    // Log available keys on first load so we know exactly what ESPN returns
-    if(!window._espnCatsLogged){ console.log('ESPN leaders keys:', Object.keys(categories)); window._espnCatsLogged = true; }
-    const lookups = {};
-    tabInfo.cols.forEach(col=>{
-      const map = {};
-      (categories[col.key] || []).forEach(r=>{
-        map[`${r.name}|${r.team}`] = {display: r.displayValue ?? String(r.value), num: r.value};
-      });
-      lookups[col.key] = map;
-    });
+    const cache = await loadNflverseSeason(currentStatsSeason);
+    let rows = tabInfo.source === 'defense' ? cache.defense : cache.offense;
 
-    // Build and store row objects so re-sorting doesn't require re-fetching
-    const primaryRows = (categories[tabInfo.primary] || []).slice(0, 30);
-    if(!primaryRows.length){
-      el.innerHTML = '<div class="loading">No leader data available for this category yet.</div>';
+    // Apply position filter if set
+    if(tabInfo.posFilter){
+      rows = rows.filter(r=> tabInfo.posFilter.includes(r.position));
+    }
+
+    // Sort by primary stat descending, minimum threshold to filter out non-contributors
+    rows = rows
+      .filter(r=> (Number(r[tabInfo.primary])||0) > 0)
+      .sort((a,b)=> (Number(b[tabInfo.primary])||0) - (Number(a[tabInfo.primary])||0))
+      .slice(0, 50);
+
+    if(!rows.length){
+      el.innerHTML = '<div class="loading">No data available for this season yet — nflverse may not have published it.</div>';
       return;
     }
 
-    statTableRows = primaryRows.map((r, i) => {
-      const key = `${r.name}|${r.team}`;
+    statTableRows = rows.map((r, i)=>{
       const cols = {}, displayCols = {};
       tabInfo.cols.forEach(col=>{
-        const entry = lookups[col.key][key];
-        cols[col.key] = entry?.num ?? null;
-        displayCols[col.key] = entry?.display ?? '—';
+        const raw = r[col.key];
+        const num = raw !== null && raw !== undefined ? Number(raw) : null;
+        cols[col.key] = num;
+        // Format nicely: round floats to 1dp, show integers as integers
+        if(num === null) displayCols[col.key] = '—';
+        else if(Number.isInteger(num)) displayCols[col.key] = String(num);
+        else displayCols[col.key] = Number(num).toFixed(1);
       });
-      return {rank: i+1, name: r.name, position: r.position||'—', team: r.team||'', cols, displayCols};
+      return {
+        rank: i+1,
+        name: r.player_display_name,
+        position: r.position||'—',
+        team: r.recent_team||'',
+        cols, displayCols
+      };
     });
 
-    // Reset sort to default (primary rank) whenever we load a new tab
     statSortKey = null;
     statSortAsc = false;
     renderStatsTableHTML(tabInfo, el);
 
   }catch(e){
-    el.innerHTML = `<div class="err">Couldn't load season stats right now. Try refreshing.</div>`;
+    el.innerHTML = `<div class="err">Couldn't load stats. ${e.message}</div>`;
   }
 }
 
@@ -2177,7 +2303,7 @@ function renderStatsTableHTML(tabInfo, el){
   });
 
   html += `</tbody></table></div>
-    <div class="src-note">Source: ESPN — ${currentStatsSeason} regular season leaders. Click any column header to sort. Columns showing — aren't published as leader categories by ESPN.</div>`;
+    <div class="src-note">Source: nflverse — ${currentStatsSeason} regular season. Click any column header to sort.</div>`;
   el.innerHTML = html;
 }
 
@@ -2301,19 +2427,35 @@ const ALL_TIME_RECORDS = [
   {cat:'Returns', label:'Career return TDs',         val:'20',      who:'Devin Hester (14 punt, 5 kickoff, 1 missed FG)'},
 ];
 
+// Maps ALL_TIME_RECORDS keys to nflverse field names (offense unless prefixed def_)
+const RECORDS_NFLVERSE_MAP = {
+  passingYards:'passing_yards', passingTouchdowns:'passing_tds',
+  rushingYards:'rushing_yards', rushingTouchdowns:'rushing_tds',
+  receivingYards:'receiving_yards', receptions:'receptions',
+  sacks:'def_sacks', defensiveInterceptions:'def_interceptions',
+  totalTackles:'def_tackles', tacklesForLoss:'def_tackles_for_loss',
+};
+
 async function renderAllTimeRecords(){
   const el = document.getElementById('allTimeRecords');
   el.innerHTML = '<div class="loading">Loading…</div>';
 
-  let categories = {};
-  try{ categories = await fetchEspnLeaders(currentStatsSeason, 2); }catch(e){}
+  // Try to get nflverse season data for current-season column
+  let nflCache = null;
+  try{ nflCache = await loadNflverseSeason(currentStatsSeason); }catch(e){}
 
   const currentSeasonLine = (r)=>{
-    if(!r.key) return null;
-    const rows = categories[r.key] || [];
+    if(!r.key || !nflCache) return null;
+    const nflKey = RECORDS_NFLVERSE_MAP[r.key];
+    if(!nflKey) return null;
+    const isDefense = nflKey.startsWith('def_');
+    const rows = (isDefense ? nflCache.defense : nflCache.offense)
+      .filter(p=>(Number(p[nflKey])||0) > 0)
+      .sort((a,b)=>(Number(b[nflKey])||0)-(Number(a[nflKey])||0));
     if(!rows.length) return null;
     const top = rows[0];
-    return `${TEST_SEASON}: ${top.name} (${top.team}) — ${top.displayValue ?? top.value}`;
+    const val = Number.isInteger(Number(top[nflKey])) ? top[nflKey] : Number(top[nflKey]).toFixed(1);
+    return `${currentStatsSeason}: ${top.player_display_name} (${top.recent_team}) — ${val}`;
   };
 
   const groups = {};
@@ -2335,7 +2477,7 @@ async function renderAllTimeRecords(){
     });
     html += `</tbody></table>`;
   });
-  html += `<div class="src-note">All-time records verified as of the most recent completed season. ${TEST_SEASON} season leader shown in orange where available from ESPN.</div>`;
+  html += `<div class="src-note">All-time records verified as of the most recent completed season. Current season leader shown in orange via nflverse.</div>`;
   el.innerHTML = html;
 }
 
@@ -2351,9 +2493,8 @@ async function loadSeasonHighs(){
     let html = `<div class="scores-grid">`;
     cardDefs.forEach(([label, rows])=>{
       if(!rows.length) return;
-      const sorted = rows.slice().sort((a,b)=>(b.value||0)-(a.value||0));
-      const top = sorted[0];
-      const restHtml = sorted.slice(1).map((r,i)=>
+      const top = rows[0];
+      const restHtml = rows.slice(1).map((r,i)=>
         `<div class="season-high-runner-up">${i+2}. ${teamLogoTag(r.team)}${r.name} <span class="muted">(${r.team||'-'}) — ${r.displayValue ?? r.value}</span></div>`
       ).join('');
       html += `<div class="game-card">
@@ -2368,20 +2509,37 @@ async function loadSeasonHighs(){
   };
 
   try{
-    const categories = await fetchEspnLeaders(currentStatsSeason, 2);
-    const toRows = (catKey)=> (categories[catKey]||[]).slice(0,10).map(r=>({name:r.name, team:r.team, value:r.value, displayValue:r.displayValue}));
+    const cache = await loadNflverseSeason(currentStatsSeason);
+    const toRows = (source, key, posFilter)=>{
+      let rows = source === 'defense' ? cache.defense : cache.offense;
+      if(posFilter) rows = rows.filter(r=>posFilter.includes(r.position));
+      return rows
+        .filter(r=>(Number(r[key])||0)>0)
+        .sort((a,b)=>(Number(b[key])||0)-(Number(a[key])||0))
+        .slice(0,10)
+        .map(r=>({
+          name: r.player_display_name,
+          team: r.recent_team,
+          value: Number(r[key]),
+          displayValue: Number.isInteger(Number(r[key])) ? String(r[key]) : Number(r[key]).toFixed(1)
+        }));
+    };
     renderCards([
-      ['Passing yards', toRows('passingYards')],
-      ['Passing TDs', toRows('passingTouchdowns')],
-      ['Rushing yards', toRows('rushingYards')],
-      ['Rushing TDs', toRows('rushingTouchdowns')],
-      ['Receiving yards', toRows('receivingYards')],
-      ['Receptions', toRows('receptions')],
-      ['Sacks', toRows('sacks')],
-      ['Interceptions', toRows('defensiveInterceptions')],
-    ], `Source: ESPN — ${currentStatsSeason} regular season leaders, top 10 shown per category.`);
+      ['Passing yards',     toRows('offense','passing_yards',    ['QB'])],
+      ['Passing TDs',       toRows('offense','passing_tds',      ['QB'])],
+      ['Passer rating',     toRows('offense','passer_rating',    ['QB'])],
+      ['Rushing yards',     toRows('offense','rushing_yards',    null)],
+      ['Rushing TDs',       toRows('offense','rushing_tds',      null)],
+      ['Receiving yards',   toRows('offense','receiving_yards',  null)],
+      ['Receptions',        toRows('offense','receptions',       null)],
+      ['Targets',           toRows('offense','targets',          null)],
+      ['Sacks',             toRows('defense','def_sacks',        null)],
+      ['Def. INTs',         toRows('defense','def_interceptions',null)],
+      ['Tackles',           toRows('defense','def_tackles',      null)],
+      ['TFL',               toRows('defense','def_tackles_for_loss',null)],
+    ], `Source: nflverse — ${currentStatsSeason} regular season, top 10 per category.`);
   }catch(e){
-    el.innerHTML = `<div class="err">Couldn't load season highs right now. Try refreshing.</div>`;
+    el.innerHTML = `<div class="err">Couldn't load season highs. nflverse data may not be available for ${currentStatsSeason} yet.</div>`;
   }
 }
 
@@ -2575,7 +2733,22 @@ async function init(){
   await loadScores();
   loadStandings();
   loadSchedule();
-  setInterval(()=>{ loadScores(); }, 30000);
+
+  // Smart auto-refresh: only poll ESPN when games are actually live AND the home tab is visible
+  // This dramatically reduces Edge Function calls compared to a blind 30s interval
+  let hasLiveGames = false;
+  const checkAndRefresh = ()=>{
+    const scoresTab = document.getElementById('tab-scores');
+    const tabVisible = scoresTab && scoresTab.style.display !== 'none';
+    if(tabVisible && hasLiveGames) loadScores();
+  };
+  // After first scores load, check if any are in progress
+  const originalRenderScores = renderScores;
+  window.renderScores = function(events){
+    hasLiveGames = events.some(ev=> ev.competitions?.[0]?.status?.type?.state === 'in');
+    originalRenderScores(events);
+  };
+  setInterval(checkAndRefresh, 60000); // check every 60s, only fetch if actually live
 }
 init();
 </script>
