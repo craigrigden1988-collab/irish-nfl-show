@@ -514,9 +514,7 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
     <div id="searchResults"></div>
   </div>
   <div class="clock" id="clock"></div>
-  <div id="seasonBadge" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:0.5px;background:var(--panel2);border:1px solid var(--line);padding:6px 10px;border-radius:6px;cursor:pointer;color:var(--orange);" onclick="toggleSeasonMode()">📊 2025 SEASON (TEST DATA) — click for LIVE</div>
-  <div id="demoModeBadge" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:0.5px;background:var(--panel2);border:1px solid var(--line);padding:6px 10px;border-radius:6px;cursor:pointer;color:var(--green);" onclick="toggleDemoMode()" title="Generates mock player data locally — no network needed, works in any preview">🧪 Preview with Demo Data</div>
-  <button id="demoReshuffleBtn" style="display:none;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="enableDemoMode()" title="Generate a fresh set of random demo data">🔀</button>
+  <div id="seasonBadge" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;letter-spacing:0.5px;background:var(--panel2);border:1px solid var(--line);padding:6px 10px;border-radius:6px;color:var(--orange);">📊 2025 SEASON — LIVE</div>
   <button id="themeToggleBtn" style="margin-left:auto;font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="toggleTheme()" title="Switch between dark and light mode">🌙 Dark</button>
 </header>
 
@@ -660,13 +658,11 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
 const API = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
 const CORE = "https://site.api.espn.com/apis/v2/sports/football/nfl";
 let allTeams = [];
-let demoMode = false;
 
 // universal team logo lookup — works whether we're in demo mode (local SVG) or
 // live/test mode (ESPN's CDN), so any section can show a logo from just an abbreviation
 function teamLogoUrl(abbr){
   if(!abbr) return '';
-  if(demoMode) return demoLogo(abbr);
   return `https://a.espncdn.com/i/teamlogos/nfl/500/${abbr.toLowerCase()}.png`;
 }
 function teamLogoTag(abbr, size){
@@ -748,9 +744,9 @@ const ONE_MONTH_MS = 30*24*60*60*1000;
 // Default to last completed season (2025) so there's real data to test with during the offseason.
 // seasontype: 2 = regular season, 3 = postseason
 const TEST_SEASON = 2025;
-const TEST_WEEK = 18; // last week of 2025 regular season, for the default scores view
+const TEST_WEEK = 18;
 let currentSeason = TEST_SEASON;
-let currentSeasonType = 2;
+let currentSeasonType = 0; // 0 = live/current
 
 function setClock(){
   document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'});
@@ -813,7 +809,6 @@ function showTab(name){
   if(name==='career') loadCareerTab();
   if(name==='injuries') loadInjuriesTab();
   if(name==='shownotes') loadShowNotesTab();
-  if(name==='comparison' && demoMode && !cmpPlayers[1]) autofillDemoComparison();
 }
 
 function toggleNavGroup(btn){
@@ -860,31 +855,19 @@ function populateWeekDropdown(selectId, currentWeek, maxWeek){
 
 async function loadScores(){
   try{
-    if(demoMode){
-      if(!demoData) demoData = buildDemoData();
-      if(selectedScoresWeek===null) selectedScoresWeek = TEST_WEEK;
-      populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
-      renderTicker(demoData.scores);
-      renderScores(demoData.scores);
-      return;
-    }
     if(selectedScoresWeek===null){
-      if(currentSeasonType===0){
-        const data = await jget(`${API}/scoreboard`);
-        if(data.week?.number) liveCurrentWeek = data.week.number;
-        selectedScoresWeek = liveCurrentWeek || 1;
-      } else {
-        selectedScoresWeek = TEST_WEEK;
-      }
+      const data = await jget(`${API}/scoreboard`);
+      if(data.week?.number) liveCurrentWeek = data.week.number;
+      selectedScoresWeek = liveCurrentWeek || 1;
     }
     const data = await jget(weekScoreboardUrl(selectedScoresWeek));
-    if(currentSeasonType===0 && data.week?.number) liveCurrentWeek = data.week.number;
+    if(data.week?.number) liveCurrentWeek = data.week.number;
     const events = data.events || [];
     populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
     renderTicker(events);
     renderScores(events);
   }catch(e){
-    document.getElementById('scoresContent').innerHTML = `<div class="err">Couldn't load scores right now — ESPN's feed or the proxy may be temporarily unreachable. Try refreshing.</div>`;
+    document.getElementById('scoresContent').innerHTML = `<div class="err">Couldn't load scores right now. Try refreshing.</div>`;
     document.getElementById('tickerTrack').innerHTML = `<div class="tick-item">Scores unavailable</div>`;
   }
 }
@@ -924,17 +907,6 @@ async function renderScores(events){
   // totalTackles first as it's the most consistently available.
   const defCatCandidates = ['totalTackles','soloTackles','sacks','defensiveInterceptions','tacklesForLoss','passesDefended'];
   const performerLinesFor = (ev, comp, c1, c2)=>{
-    if(demoMode){
-      const homeAbbr = c1.team.abbreviation, awayAbbr = c2.team.abbreviation;
-      const findBest = (pos, statKey)=>{
-        const candidates = nflversePlayerStats.filter(p=>p.position===pos && (p.team===homeAbbr || p.team===awayAbbr));
-        if(!candidates.length) return null;
-        const best = candidates.sort((a,b)=>(b[statKey]||0)-(a[statKey]||0))[0];
-        return {abbr: best.team, name: best.player_display_name, display: statKey==='passing_yards' ? `${best.passing_yards} yds, ${best.passing_tds} TD` : statKey==='rushing_yards' ? `${best.rushing_yards} yds, ${best.rushing_tds} TD` : statKey==='receiving_yards' ? `${best.receiving_yards} yds, ${best.receiving_tds} TD` : `${best.def_sacks} sacks, ${best.def_tackles_combined} tkl`};
-      };
-      const rows = [['QB', findBest('QB','passing_yards')], ['RB', findBest('RB','rushing_yards')], ['WR', findBest('WR','receiving_yards')], ['DEF', findBest('DEF','def_sacks')]];
-      return rows.map(([label,r])=> r ? `<div class="perf-row"><span class="perf-badge ${label.toLowerCase()}">${label}</span>${teamLogoTag(r.abbr)}<span class="perf-name">${r.name}</span><span class="perf-stat">${r.display}</span></div>` : '').join('');
-    }
     const leadersByCat = {};
     (comp?.leaders || []).forEach(cat=>{
       if(catLabel[cat.name] && cat.leaders && cat.leaders[0]) leadersByCat[cat.name] = cat.leaders[0];
@@ -1118,13 +1090,6 @@ let liveCurrentWeek = null; // populated from ESPN's live scoreboard response, u
 
 async function loadStandings(){
   try{
-    if(demoMode){
-      if(!demoData) demoData = buildDemoData();
-      standingsCache = demoData.standings;
-      renderStandingsView();
-      return;
-    }
-    // Always fetch current season standings — works even with 0 games played
     const url = `${CORE}/standings?level=3&season=${TEST_SEASON}&seasontype=2`;
     standingsCache = await jget(url);
     renderStandingsView();
@@ -1264,23 +1229,13 @@ let selectedScheduleWeek = null;
 
 async function loadSchedule(){
   try{
-    if(demoMode){
-      if(!demoData) demoData = buildDemoData();
-      if(selectedScheduleWeek===null) selectedScheduleWeek = TEST_WEEK;
-      populateWeekDropdown('scheduleWeekSelect', selectedScheduleWeek, 22);
-      let html = `<div class="div-title">Week ${selectedScheduleWeek} — Demo Data</div>`;
-      html += `<div class="scores-grid">${demoData.scores.map(scheduleRow).join('')}</div>`;
-      document.getElementById('scheduleContent').innerHTML = html;
-      return;
-    }
     if(selectedScheduleWeek===null){
-      selectedScheduleWeek = currentSeasonType===0 ? (liveCurrentWeek || selectedScoresWeek || 1) : TEST_WEEK;
+      selectedScheduleWeek = liveCurrentWeek || selectedScoresWeek || 1;
     }
     populateWeekDropdown('scheduleWeekSelect', selectedScheduleWeek, 22);
     const data = await jget(weekScoreboardUrl(selectedScheduleWeek));
     const events = data.events || [];
-    const label = currentSeasonType===0 ? `Week ${selectedScheduleWeek}` : `Week ${selectedScheduleWeek} — ${currentSeason} Season`;
-    let html = `<div class="div-title">${label}</div>`;
+    let html = `<div class="div-title">Week ${selectedScheduleWeek}</div>`;
     html += events.length ? `<div class="scores-grid">${events.map(scheduleRow).join('')}</div>` : '<div class="loading">No games found for this week.</div>';
     document.getElementById('scheduleContent').innerHTML = html;
   }catch(e){
@@ -1392,17 +1347,9 @@ function scheduleRow(ev){
 async function loadTeams(retrying){
   const el = document.getElementById('teamsContent');
   try{
-    let teams = [];
-    if(demoMode){
-      if(!demoData) demoData = buildDemoData();
-      teams = demoData.teams;
-    } else {
-      const json = await jget(`${API}/teams?limit=32`);
-      teams = (json.sports[0].leagues[0].teams||[]).map(t=>t.team);
-    }
+    const json = await jget(`${API}/teams?limit=32`);
+    let teams = (json.sports[0].leagues[0].teams||[]).map(t=>t.team);
     allTeams = teams;
-
-    // Sort by wins desc using record string (e.g. "14-3") — graceful fallback to name order
     teams = teams.slice().sort((a,b)=>{
       const winsA = parseInt((a.record?.items?.[0]?.summary||'0-0').split('-')[0])||0;
       const winsB = parseInt((b.record?.items?.[0]?.summary||'0-0').split('-')[0])||0;
@@ -1412,71 +1359,21 @@ async function loadTeams(retrying){
     el.innerHTML = `<div class="roster-grid">${teams.map((t,i)=>{
       const record = t.record?.items?.[0]?.summary || '';
       const abbr = t.abbreviation;
-      return `<div class="player-tile" style="cursor:pointer;padding:14px;" onclick="openTeam('${abbr}')">
-        <div class="player-tile-row" style="gap:12px;">
-          <span style="color:var(--muted);font-size:13px;min-width:22px;">${i+1}</span>
-          ${teamLogoTag(abbr, 36)}
-          <div style="flex:1;">
-            <div class="player-name" style="font-size:15px;">${t.displayName}</div>
-            ${record ? `<div style="color:var(--muted);font-size:12px;">${record}</div>` : ''}
-          </div>
+      return `<div class="player-tile" style="cursor:pointer;padding:16px;text-align:center;" onclick="openTeam('${abbr}')">
+        <div style="color:var(--muted);font-size:11px;text-align:left;margin-bottom:8px;">${i+1}</div>
+        <div style="display:flex;justify-content:center;margin-bottom:10px;">
+          ${teamLogoTag(abbr, 56)}
         </div>
-        <div id="tile-extras-${abbr}" style="margin-top:8px;font-size:12px;color:var(--muted);">
-          <span class="loading" style="font-size:11px;">Loading…</span>
-        </div>
+        <div style="font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;">${t.displayName}</div>
+        ${record ? `<div style="color:var(--muted);font-size:13px;margin-top:4px;">${record}</div>` : ''}
       </div>`;
     }).join('')}</div>`;
-
-    // Load last meeting + top performers async for each team (non-blocking)
-    teams.forEach(t=>loadTeamTileExtras(t.abbreviation));
   }catch(e){
     if(!retrying){ return loadTeams(true); }
     el.innerHTML = `<div class="err">Couldn't load teams. <button class="h2h-toggle" style="margin-top:8px;" onclick="loadTeams()">Retry</button></div>`;
   }
 }
 
-async function loadTeamTileExtras(abbr){
-  const el = document.getElementById(`tile-extras-${abbr}`);
-  if(!el) return;
-  try{
-    // Top season performers from ESPN leaders cache
-    const categories = await fetchEspnLeaders(TEST_SEASON, 2).catch(()=>null);
-    let perfLines = [];
-    if(categories){
-      const topFor = (key, label)=>{
-        const rows = (categories[key]||[]).filter(r=>r.team===abbr);
-        if(!rows.length) return null;
-        return `<span class="perf-badge ${label.toLowerCase()}">${label}</span> ${rows[0].name} <span style="color:var(--orange)">${rows[0].displayValue}</span>`;
-      };
-      [['passingYards','QB'],['rushingYards','RB'],['receivingYards','WR'],['totalTackles','DEF']].forEach(([key,label])=>{
-        const line = topFor(key, label);
-        if(line) perfLines.push(line);
-      });
-    }
-
-    // Last meeting from H2H cache
-    const lastGames = await getLastMeetings(abbr, null, 1).catch(()=>[]);
-    let lastMeetingHtml = '';
-    if(lastGames.length){
-      const g = lastGames[0];
-      const opp = g.home_team===abbr ? g.away_team : g.home_team;
-      const homeScore = g.home_score, awayScore = g.away_score;
-      const teamScore = g.home_team===abbr ? homeScore : awayScore;
-      const oppScore = g.home_team===abbr ? awayScore : homeScore;
-      const result = teamScore > oppScore ? 'W' : teamScore < oppScore ? 'L' : 'T';
-      const resultColor = result==='W'?'var(--green)':result==='L'?'#e74c3c':'var(--muted)';
-      lastMeetingHtml = `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
-        <span style="color:var(--muted)">Last game: </span>${teamLogoTag(opp,14)}${opp} 
-        <span style="color:${resultColor};font-weight:700;">${result} ${teamScore}–${oppScore}</span>
-        <span style="color:var(--muted)"> (${g.gameday?.slice(0,4)||''})</span>
-      </div>`;
-    }
-
-    el.innerHTML = (perfLines.length ? `<div style="display:flex;flex-direction:column;gap:3px;">${perfLines.map(l=>`<div>${l}</div>`).join('')}</div>` : '') + lastMeetingHtml;
-  }catch(e){
-    el.innerHTML = '';
-  }
-}
 
 async function openTeam(abbr){
   showTab('teamDetail');
@@ -1617,12 +1514,6 @@ async function togglePlayerDetail(tileEl, athleteId, pos){
   detail.style.display = 'block';
   if(detail.dataset.loaded === 'true') return;
 
-  if(demoMode){
-    detail.innerHTML = `<div class="muted" style="font-size:12px;">Draft/career detail isn't simulated in demo mode — toggle off demo to see real data here.</div>`;
-    detail.dataset.loaded = 'true';
-    return;
-  }
-
   detail.innerHTML = '<div class="loading" style="padding:8px 0;">Loading…</div>';
   try{
     const [overviewResult, athleteResult] = await Promise.allSettled([
@@ -1725,30 +1616,22 @@ async function selectInjuryTeam(abbr){
   document.querySelectorAll('#injuryTeamPicker .stat-cat').forEach(b=>b.classList.toggle('active', b.dataset.team===abbr));
   const el = document.getElementById('injuryContent');
   el.innerHTML = '<div class="loading">Loading injury report…</div>';
-  if(demoMode){
-    if(!demoData) demoData = buildDemoData();
-    renderInjuryItems(el, demoData.injuries[abbr]||[], true);
-    return;
-  }
   try{
     const data = await jget(`${API}/teams/${abbr}/injuries`);
     const items = data.injuries || data.items || [];
-    renderInjuryItems(el, items, false);
+    renderInjuryItems(el, items);
   }catch(e){
     el.innerHTML = `<div class="err">Couldn't load injury report for ${abbr}.</div>`;
   }
 }
 window.selectInjuryTeam = selectInjuryTeam;
 
-function renderInjuryItems(el, items, isDemo){
+function renderInjuryItems(el, items){
   if(!items.length){
     el.innerHTML = '<div class="loading">No reported injuries for this team right now.</div>';
     return;
   }
-  // Sort by most recent date first
-  const sorted = items.slice().sort((a,b)=>{
-    return new Date(b.date||0) - new Date(a.date||0);
-  });
+  const sorted = items.slice().sort((a,b)=> new Date(b.date||0) - new Date(a.date||0));
   const statusColor = (s)=> /out/i.test(s) ? '#e74c3c' : /quest|doubt/i.test(s) ? 'var(--orange)' : /probable/i.test(s) ? 'var(--green)' : 'var(--muted)';
   let html = `<div class="roster-grid">`;
   sorted.forEach(it=>{
@@ -1772,7 +1655,6 @@ function renderInjuryItems(el, items, isDemo){
     </div>`;
   });
   html += `</div>`;
-  if(isDemo) html += `<div class="src-note">🧪 Demo data — randomly generated.</div>`;
   el.innerHTML = html;
 }
 
@@ -1847,10 +1729,7 @@ function cmpSearch(slot){
   const q = input.value.trim().toLowerCase();
   if(q.length < 2){ results.style.display='none'; return; }
 
-  // In demo mode search nflversePlayerStats; live mode searches loaded rosters (allPlayers)
-  const pool = demoMode
-    ? (nflversePlayerStats||[]).map(r=>({id:r.player_id, fullName:r.player_display_name, position:{abbreviation:r.position}, team:r.team}))
-    : (allPlayers||[]);
+  const pool = allPlayers||[];
 
   const matches = pool.filter(p=>p.fullName.toLowerCase().includes(q)).slice(0,8);
   if(!matches.length){ results.style.display='none'; return; }
@@ -1887,73 +1766,6 @@ async function runComparison(){
     el.innerHTML = '<div class="err">Please select both players first.</div>'; return;
   }
 
-  // ---------- DEMO MODE ----------
-  if(demoMode){
-    const lookup = id => (nflversePlayerStats||[]).find(r=>r.player_id===id);
-    const p1 = lookup(cmpPlayers[1].id);
-    const p2 = lookup(cmpPlayers[2].id);
-
-    const STAT_LABELS = {
-      attempts:'ATT', completions:'CMP', passing_yards:'Pass YDS', passing_tds:'Pass TD', interceptions:'INT',
-      carries:'Rush ATT', rushing_yards:'Rush YDS', rushing_tds:'Rush TD',
-      targets:'TGT', receptions:'REC', receiving_yards:'Rec YDS', receiving_tds:'Rec TD',
-      def_tackles_combined:'Tackles', def_sacks:'Sacks', def_interceptions:'INT', def_tackles_for_loss:'TFL', def_pass_defended:'PD',
-      fg_made:'FGM', fg_att:'FGA', fg_long:'FG Long', xp_made:'XPM', xp_att:'XPA',
-      punts:'Punts', punt_yards:'Punt YDS', punt_long:'Long', punts_in20:'In 20', punt_tb:'TB',
-    };
-    const POS_STATS = {
-      QB:['attempts','completions','passing_yards','passing_tds','interceptions','rushing_yards','rushing_tds'],
-      RB:['carries','rushing_yards','rushing_tds','targets','receptions','receiving_yards','receiving_tds'],
-      WR:['targets','receptions','receiving_yards','receiving_tds','carries','rushing_yards'],
-      TE:['targets','receptions','receiving_yards','receiving_tds'],
-      DEF:['def_tackles_combined','def_sacks','def_interceptions','def_tackles_for_loss','def_pass_defended'],
-      K:['fg_made','fg_att','fg_long','xp_made','xp_att'],
-      P:['punts','punt_yards','punt_long','punts_in20','punt_tb'],
-    };
-
-    const demoBioCard = (p, cp)=>{
-      if(!p) return '<div class="loading">Player not found in demo data</div>';
-      return `<div style="text-align:center;">
-        <div style="width:80px;height:80px;border-radius:50%;border:2px solid var(--border);background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto;">🏈</div>
-        <div style="font-family:'Oswald',sans-serif;font-size:18px;font-weight:700;margin-top:6px;">${p.player_display_name}</div>
-        <div style="color:var(--muted);font-size:13px;">${p.position} · ${teamLogoTag(p.team,16)}${p.team}</div>
-        <div style="color:var(--muted);font-size:12px;margin-top:4px;">🧪 Demo Player</div>
-      </div>`;
-    };
-
-    const demoStatRows = (p)=>{
-      if(!p) return '';
-      const keys = POS_STATS[p.position] || Object.keys(STAT_LABELS);
-      return keys.filter(k=>p[k]!=null && p[k]!==0).map(k=>`
-        <tr>
-          <td style="color:var(--muted);font-size:12px;">${STAT_LABELS[k]||k}</td>
-          <td style="font-family:'Oswald',sans-serif;font-weight:600;">${p[k]}</td>
-        </tr>`).join('');
-    };
-
-    const p1data = lookup(cmpPlayers[1].id);
-    const p2data = lookup(cmpPlayers[2].id);
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:start;">
-        <div class="game-card">${demoBioCard(p1data, cmpPlayers[1])}</div>
-        <div style="display:flex;align-items:center;padding-top:40px;font-family:'Oswald',sans-serif;font-size:20px;color:var(--muted);">VS</div>
-        <div class="game-card">${demoBioCard(p2data, cmpPlayers[2])}</div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
-        <div class="game-card">
-          <div class="game-status"><span>STATS — ${cmpPlayers[1].name.split(' ').pop().toUpperCase()}</span></div>
-          <table style="width:100%;"><tbody>${demoStatRows(p1data)}</tbody></table>
-        </div>
-        <div class="game-card">
-          <div class="game-status"><span>STATS — ${cmpPlayers[2].name.split(' ').pop().toUpperCase()}</span></div>
-          <table style="width:100%;"><tbody>${demoStatRows(p2data)}</tbody></table>
-        </div>
-      </div>
-      <div class="src-note">🧪 Demo data — randomly generated locally.</div>`;
-    return;
-  }
-
-  // ---------- LIVE MODE ----------
   el.innerHTML = '<div class="loading">Loading player data…</div>';
   try{
     const [r1, r2] = await Promise.all([
@@ -2016,43 +1828,12 @@ async function runComparison(){
 window.runComparison = runComparison;
 
 // Pre-fill comparison with two QBs from demo data so the tab isn't blank
-function autofillDemoComparison(){
-  if(!demoMode || !nflversePlayerStats?.length) return;
-  const qbs = nflversePlayerStats.filter(r=>r.position==='QB');
-  if(qbs.length >= 2){
-    selectCmpPlayer(1, qbs[0].player_id, qbs[0].player_display_name, 'QB');
-    selectCmpPlayer(2, qbs[1].player_id, qbs[1].player_display_name, 'QB');
-    runComparison();
-  }
-}
-window.autofillDemoComparison = autofillDemoComparison;
 
-function toggleSeasonMode(){
-  const badge = document.getElementById('seasonBadge');
-  if(currentSeasonType===0){
-    currentSeasonType = 2;
-    currentSeason = TEST_SEASON;
-    badge.textContent = '📊 2025 SEASON (TEST DATA) — click for LIVE';
-    badge.style.color = 'var(--orange)';
-  } else {
-    currentSeasonType = 0;
-    badge.textContent = '🔴 LIVE MODE — click for 2025 TEST DATA';
-    badge.style.color = 'var(--green)';
-  }
-  selectedScoresWeek = null;
-  selectedScheduleWeek = null;
-  loadScores();
-  loadStandings();
-  loadSchedule();
-}
-window.toggleSeasonMode = toggleSeasonMode;
-
-// ---------- PLAYER STATS (demo mode data store; live stats now sourced from ESPN leaders) ----------
-let nflversePlayerStats = null; // cached parsed rows (demo mode only now)
+// ---------- PLAYER STATS ----------
 let currentStatCat = 'passing';
-let statTableRows = [];      // last-rendered rows {name, position, team, cols:{key:numericVal}, displayCols:{key:displayVal}}
-let statSortKey = null;      // column key currently sorted by, null = default (primary rank)
-let statSortAsc = false;     // ascending when true
+let statTableRows = [];
+let statSortKey = null;
+let statSortAsc = false;
 
 // GitHub's release-asset CDN (releases/download/... redirects to objects.githubusercontent.com)
 // doesn't send CORS headers, so direct browser fetches are blocked outright — same root
@@ -2231,55 +2012,6 @@ async function renderStatCat(cat){
   const tabInfo = STAT_TAB_CONFIG[cat];
   if(!tabInfo){ el.innerHTML = '<div class="loading">No data for this category.</div>'; return; }
 
-  if(demoMode){
-    const demoKeyMap = {passing:'passing_yards', rushing:'rushing_yards', receiving:'receiving_yards', defense:'def_sacks', kicking:'fg_made', punting:'punt_yards'};
-    const statKey = demoKeyMap[cat];
-    if(!statKey){ el.innerHTML = '<div class="loading">No demo data for this category.</div>'; return; }
-    let rows = (nflversePlayerStats||[]).filter(r=>r && r[statKey]>0).sort((a,b)=>b[statKey]-a[statKey]).slice(0,25);
-    if(!rows.length){ el.innerHTML = '<div class="loading">No demo data.</div>'; return; }
-    const demoColMap = {
-      // QB
-      passingAttempts:'attempts', completions:'completions', completionPct:null,
-      passingYards:'passing_yards', passingTouchdowns:'passing_tds',
-      interceptions:'interceptions', QBRating:null,
-      // RB
-      rushingAttempts:'carries', rushingYards:'rushing_yards',
-      rushingTouchdowns:'rushing_tds', yardsPerRushAttempt:null,
-      longRushing:null, rushingYardsAfterContact:null,
-      // WR/TE
-      receivingTargets:'targets', receptions:'receptions',
-      receivingYards:'receiving_yards', receivingTouchdowns:'receiving_tds',
-      yardsPerReception:null, longReception:null, drops:null,
-      // Defense
-      totalTackles:'def_tackles_combined', sacks:'def_sacks',
-      tacklesForLoss:'def_tackles_for_loss', forcedFumbles:null,
-      defensiveInterceptions:'def_interceptions', passesDefended:'def_pass_defended', penalties:null,
-      // Kicking
-      fieldGoalsMade:'fg_made', fieldGoalAttempts:'fg_att', fieldGoalPct:null,
-      longFieldGoal:'fg_long', extraPointsMade:'xp_made', extraPointAttempts:'xp_att',
-      // Punting
-      punts:'punts', puntYards:'punt_yards', yardsPerPunt:null,
-      longPunt:'punt_long', puntsInside20:'punts_in20', touchbacks:'punt_tb',
-    };
-    // Build statTableRows the same way as the live path so sortStatsTable works in demo too
-    statTableRows = rows.map((r, i)=>{
-      const cols = {}, displayCols = {};
-      tabInfo.cols.forEach(col=>{
-        const dk = demoColMap[col.key];
-        const num = (dk && r[dk]!=null) ? Number(r[dk]) : null;
-        cols[col.key] = num;
-        displayCols[col.key] = num !== null ? String(r[dk]) : '—';
-      });
-      return {rank: i+1, name: r.player_display_name, position: r.position||'—', team: r.team||'', cols, displayCols};
-    });
-    statSortKey = null;
-    statSortAsc = false;
-    renderStatsTableHTML(tabInfo, el);
-    // Override the source note to say demo
-    const note = el.querySelector('.src-note');
-    if(note) note.textContent = '🧪 Demo data — randomly generated locally. Click any column header to sort.';
-    return;
-  }
 
   try{
     const categories = await fetchEspnLeaders(TEST_SEASON, 2);
@@ -2496,57 +2228,19 @@ const ALL_TIME_RECORDS = [
   {cat:'Returns', label:'Career return TDs',         val:'20',      who:'Devin Hester (14 punt, 5 kickoff, 1 missed FG)'},
 ];
 
-// demo-data field names matching each ESPN leader key
-const DEMO_RECORD_KEY_MAP = {
-  // Single season offensive
-  passingYards:'passing_yards', passingTouchdowns:'passing_tds',
-  rushingYards:'rushing_yards', rushingTouchdowns:'rushing_tds',
-  receivingYards:'receiving_yards', receptions:'receptions',
-  // Defense
-  sacks:'def_sacks', defensiveInterceptions:'def_interceptions',
-  totalTackles:'def_tackles_combined', tacklesForLoss:'def_tackles_for_loss',
-  // Kicking
-  longFieldGoal:'fg_long',
-  // Punting
-  longPunt:'punt_long',
-  // Returns — demo doesn't generate return stats so these will return null gracefully
-  longKickReturn:null, longPuntReturn:null,
-};
-
 async function renderAllTimeRecords(){
   const el = document.getElementById('allTimeRecords');
   el.innerHTML = '<div class="loading">Loading…</div>';
 
-  // Ensure demo data exists if we're in demo mode
-  if(demoMode && (!nflversePlayerStats || !nflversePlayerStats.length)){
-    nflversePlayerStats = generateDemoPlayerRows();
-  }
-
-  // Fetch current season leaders once — used to populate inline "this season" lines
   let categories = {};
-  if(!demoMode){
-    try{ categories = await fetchEspnLeaders(TEST_SEASON, 2); }catch(e){}
-  }
+  try{ categories = await fetchEspnLeaders(TEST_SEASON, 2); }catch(e){}
 
-  // Returns the current season leader string for a record row, or null if unavailable
   const currentSeasonLine = (r)=>{
     if(!r.key) return null;
-    const label = demoMode ? '🧪 Demo' : String(TEST_SEASON);
-    if(demoMode){
-      const dk = DEMO_RECORD_KEY_MAP[r.key];
-      if(!dk) return null;
-      // use >= 0 but sort desc so top player is the actual leader
-      const rows = (nflversePlayerStats||[])
-        .filter(p=>p && p[dk] != null && p[dk] > 0)
-        .sort((a,b)=>Number(b[dk])-Number(a[dk]));
-      if(!rows.length) return null;
-      const top = rows[0];
-      return `${label}: ${top.player_display_name} (${top.team}) — ${top[dk]}`;
-    }
     const rows = categories[r.key] || [];
     if(!rows.length) return null;
     const top = rows[0];
-    return `${label}: ${top.name} (${top.team}) — ${top.displayValue ?? top.value}`;
+    return `${TEST_SEASON}: ${top.name} (${top.team}) — ${top.displayValue ?? top.value}`;
   };
 
   const groups = {};
@@ -2617,24 +2311,6 @@ async function loadSeasonHighs(){
     el.innerHTML = html;
   };
 
-  if(demoMode){
-    if(!nflversePlayerStats || !nflversePlayerStats.length){ el.innerHTML = '<div class="loading">No demo data yet — toggle demo mode on.</div>'; return; }
-    const toRows = (key)=> nflversePlayerStats.filter(r=>r && r[key]>0).map(r=>({name:r.player_display_name, team:r.team, value:r[key]}));
-    renderCards([
-      ['Passing yards', toRows('passing_yards')],
-      ['Passing TDs', toRows('passing_tds')],
-      ['Rushing yards', toRows('rushing_yards')],
-      ['Rushing TDs', toRows('rushing_tds')],
-      ['Receiving yards', toRows('receiving_yards')],
-      ['Receptions', toRows('receptions')],
-      ['Sacks', toRows('def_sacks')],
-      ['Interceptions', toRows('def_interceptions')],
-      ['Tackles', toRows('def_tackles_combined')],
-      ['Tackles for loss', toRows('def_tackles_for_loss')],
-    ], '🧪 Demo data — randomly generated locally.');
-    return;
-  }
-
   try{
     const categories = await fetchEspnLeaders(TEST_SEASON, 2);
     const toRows = (catKey)=> (categories[catKey]||[]).map(r=>({name:r.name, team:r.team, value:r.value, displayValue:r.displayValue}));
@@ -2647,7 +2323,7 @@ async function loadSeasonHighs(){
       ['Receptions', toRows('receptions')],
       ['Sacks', toRows('sacks')],
       ['Interceptions', toRows('defensiveInterceptions')],
-    ], 'Source: ESPN — leading 2025 regular season figures, league-wide. Ties show every player tied for the lead; otherwise 2nd (and 3rd, if 2nd is also a single player) is shown for context.');
+    ], 'Source: ESPN — leading 2025 regular season figures.');
   }catch(e){
     el.innerHTML = `<div class="err">Couldn't load season highs right now. Try refreshing.</div>`;
   }
@@ -2704,251 +2380,7 @@ function statLineFor(r){
   return parts.join(', ') || 'No major stats recorded';
 }
 
-// ---------- DEMO MODE (mock data generated locally, no network needed) ----------
-const DEMO_TEAMS = ['ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LV','LAC','LAR','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SF','SEA','TB','TEN','WSH'];
-const DEMO_FIRST_NAMES = ['Jake','Marcus','Tyler','Devon','Jordan','Cole','Brandon','Xavier','Mason','Trevor','Isaiah','Dante','Caleb','Jalen','Hunter','Reggie','Aaron','Drew','Malik','Connor'];
-const DEMO_LAST_NAMES = ['Carter','Reynolds','Brooks','Mitchell','Foster','Hayes','Sullivan','Whitfield','Ramsey','Coleman','Bishop','Donovan','Pierce','Walsh','Lawson','Briggs','Sanders','Holt','Maddox','Quinn'];
-function rngInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
-function rngPick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
-function generateDemoPlayerRows(){
-  const rows = [];
-  let idCounter = 1;
-  DEMO_TEAMS.forEach(team=>{
-    const slots = [
-      {pos:'QB'}, {pos:'RB'}, {pos:'WR'}, {pos:'TE'}, {pos:'DEF'}, {pos:'K'}, {pos:'P'}
-    ];
-    slots.forEach(slot=>{
-      const name = `${rngPick(DEMO_FIRST_NAMES)} ${rngPick(DEMO_LAST_NAMES)}`;
-      const row = {
-        player_id: `demo_${idCounter++}`,
-        player_display_name: name,
-        position: slot.pos,
-        team: team,
-        week: TEST_WEEK,
-        season: TEST_SEASON,
-        passing_yards:0, passing_tds:0, interceptions:0, completions:0, attempts:0,
-        rushing_yards:0, rushing_tds:0, carries:0,
-        receiving_yards:0, receiving_tds:0, receptions:0, targets:0,
-        def_sacks:0, def_interceptions:0, def_tackles_combined:0, def_tackles_for_loss:0, def_qb_hits:0, def_pass_defended:0,
-        fg_made:0, fg_att:0, fg_long:0, xp_made:0, xp_att:0,
-        punts:0, punt_yards:0, punt_long:0, punts_in20:0, punt_tb:0
-      };
-      if(slot.pos==='QB'){
-        row.attempts = rngInt(25,42); row.completions = Math.round(row.attempts*(0.58+Math.random()*0.18));
-        row.passing_yards = rngInt(150,395); row.passing_tds = rngInt(0,4); row.interceptions = rngInt(0,2);
-        row.rushing_yards = rngInt(-2,35); row.rushing_tds = Math.random()<0.15?1:0;
-      } else if(slot.pos==='RB'){
-        row.carries = rngInt(8,26); row.rushing_yards = rngInt(20,160); row.rushing_tds = Math.random()<0.35?rngInt(1,2):0;
-        row.targets = rngInt(0,7); row.receptions = rngInt(0,row.targets); row.receiving_yards = row.receptions*rngInt(4,12);
-      } else if(slot.pos==='WR'){
-        row.targets = rngInt(3,12); row.receptions = rngInt(1,row.targets); row.receiving_yards = rngInt(20,165);
-        row.receiving_tds = Math.random()<0.3?rngInt(1,2):0;
-      } else if(slot.pos==='TE'){
-        row.targets = rngInt(2,8); row.receptions = rngInt(1,row.targets); row.receiving_yards = rngInt(10,90);
-        row.receiving_tds = Math.random()<0.2?1:0;
-      } else if(slot.pos==='DEF'){
-        row.def_sacks = Math.random()<0.5 ? (rngInt(0,3)+(Math.random()<0.3?0.5:0)) : 0;
-        row.def_interceptions = Math.random()<0.2?1:0;
-        row.def_tackles_combined = rngInt(2,13);
-        row.def_tackles_for_loss = rngInt(0,3);
-        row.def_qb_hits = rngInt(0,3);
-        row.def_pass_defended = rngInt(0,2);
-      } else if(slot.pos==='K'){
-        row.fg_att = rngInt(1,5);
-        row.fg_made = Math.max(0, row.fg_att - rngInt(0,1));
-        row.fg_long = row.fg_made > 0 ? rngInt(22, 57) : 0;
-        row.xp_att = rngInt(1,6);
-        row.xp_made = Math.random()<0.95 ? row.xp_att : row.xp_att - 1;
-      } else if(slot.pos==='P'){
-        row.punts = rngInt(3, 8);
-        row.punt_yards = row.punts * rngInt(38, 55);
-        row.punt_long = rngInt(45, 72);
-        row.punts_in20 = rngInt(0, Math.min(row.punts, 4));
-        row.punt_tb = rngInt(0, 2);
-      }
-      rows.push(row);
-    });
-  });
-  return rows;
-}
-
-function enableDemoMode(){
-  demoMode = true;
-  nflversePlayerStats = generateDemoPlayerRows();
-  demoData = buildDemoData();
-  injuryPickerBuilt = false; // force the injury team picker to rebuild against demo teams
-  document.getElementById('demoModeBadge').textContent = '🧪 Demo Data Active — click to turn off';
-  document.getElementById('demoModeBadge').style.color = 'var(--orange)';
-  document.getElementById('demoReshuffleBtn').style.display = 'inline-block';
-  refreshAfterDataSourceChange();
-}
-
-function disableDemoMode(){
-  demoMode = false;
-  demoData = null;
-  nflversePlayerStats = null; // force real data to be re-fetched next time it's needed
-  injuryPickerBuilt = false;
-  document.getElementById('demoModeBadge').textContent = '🧪 Preview with Demo Data';
-  document.getElementById('demoModeBadge').style.color = 'var(--green)';
-  document.getElementById('demoReshuffleBtn').style.display = 'none';
-  refreshAfterDataSourceChange();
-}
-
-function refreshAfterDataSourceChange(){
-  // refresh whichever tabs already have content on screen so the change is visible immediately
-  if(document.getElementById('tab-playerstats').style.display !== 'none'){
-    if(demoMode || nflversePlayerStats) renderStatCat(currentStatCat);
-    else loadPlayerStats();
-  }
-  if(document.getElementById('tab-records').style.display !== 'none') loadRecords();
-  loadScores();
-  loadStandings();
-  loadSchedule();
-  loadTeams();
-  if(document.getElementById('tab-injuries').style.display !== 'none'){ loadInjuriesTab(); }
-}
-
-function toggleDemoMode(){
-  if(demoMode) disableDemoMode();
-  else enableDemoMode();
-}
-window.toggleDemoMode = toggleDemoMode;
-window.enableDemoMode = enableDemoMode;
-window.disableDemoMode = disableDemoMode;
-
-// ---------- DEMO DATA: teams, standings, scores, schedule, news, injuries ----------
-const DEMO_TEAM_META = {
-  ARI:{city:'Arizona',name:'Cardinals',color:'97233F'}, ATL:{city:'Atlanta',name:'Falcons',color:'A71930'},
-  BAL:{city:'Baltimore',name:'Ravens',color:'241773'}, BUF:{city:'Buffalo',name:'Bills',color:'00338D'},
-  CAR:{city:'Carolina',name:'Panthers',color:'0085CA'}, CHI:{city:'Chicago',name:'Bears',color:'0B162A'},
-  CIN:{city:'Cincinnati',name:'Bengals',color:'FB4F14'}, CLE:{city:'Cleveland',name:'Browns',color:'311D00'},
-  DAL:{city:'Dallas',name:'Cowboys',color:'003594'}, DEN:{city:'Denver',name:'Broncos',color:'FB4F14'},
-  DET:{city:'Detroit',name:'Lions',color:'0076B6'}, GB:{city:'Green Bay',name:'Packers',color:'203731'},
-  HOU:{city:'Houston',name:'Texans',color:'03202F'}, IND:{city:'Indianapolis',name:'Colts',color:'002C5F'},
-  JAX:{city:'Jacksonville',name:'Jaguars',color:'101820'}, KC:{city:'Kansas City',name:'Chiefs',color:'E31837'},
-  LV:{city:'Las Vegas',name:'Raiders',color:'000000'}, LAC:{city:'Los Angeles',name:'Chargers',color:'0080C6'},
-  LAR:{city:'Los Angeles',name:'Rams',color:'003594'}, MIA:{city:'Miami',name:'Dolphins',color:'008E97'},
-  MIN:{city:'Minnesota',name:'Vikings',color:'4F2683'}, NE:{city:'New England',name:'Patriots',color:'002244'},
-  NO:{city:'New Orleans',name:'Saints',color:'D3BC8D'}, NYG:{city:'New York',name:'Giants',color:'0B2265'},
-  NYJ:{city:'New York',name:'Jets',color:'125740'}, PHI:{city:'Philadelphia',name:'Eagles',color:'004C54'},
-  PIT:{city:'Pittsburgh',name:'Steelers',color:'FFB612'}, SF:{city:'San Francisco',name:'49ers',color:'AA0000'},
-  SEA:{city:'Seattle',name:'Seahawks',color:'002244'}, TB:{city:'Tampa Bay',name:'Buccaneers',color:'D50A0A'},
-  TEN:{city:'Tennessee',name:'Titans',color:'0C2340'}, WSH:{city:'Washington',name:'Commanders',color:'5A1414'}
-};
-const DEMO_DIVISIONS = {
-  AFC:{East:['BUF','MIA','NE','NYJ'], North:['BAL','CIN','CLE','PIT'], South:['HOU','IND','JAX','TEN'], West:['DEN','KC','LAC','LV']},
-  NFC:{East:['DAL','NYG','PHI','WSH'], North:['CHI','DET','GB','MIN'], South:['ATL','CAR','NO','TB'], West:['ARI','LAR','SF','SEA']}
-};
-
-function demoLogo(abbr){
-  const color = DEMO_TEAM_META[abbr]?.color || '888888';
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='32' fill='#${color}'/><text x='32' y='39' font-family='Arial,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'>${abbr}</text></svg>`;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
-}
-function demoPlaceholderImage(){
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 120'><rect width='200' height='120' fill='#1B2318'/><text x='100' y='65' font-family='Arial,sans-serif' font-size='16' fill='#8F9C87' text-anchor='middle'>NFL</text></svg>`;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
-}
-function demoTeamObj(abbr){
-  const meta = DEMO_TEAM_META[abbr] || {city:abbr, name:'', color:'888888'};
-  return {
-    id: abbr, uid: abbr, abbreviation: abbr,
-    displayName: `${meta.city} ${meta.name}`, shortDisplayName: meta.name,
-    logo: demoLogo(abbr), logos: [{href: demoLogo(abbr)}],
-    standardSummary: `${meta.city} ${meta.name}`
-  };
-}
-
-let demoData = null; // {teams, standings, scores, news, injuries} — generated once per "shuffle"
-
-function buildDemoData(){
-  const games = Math.min(TEST_WEEK, 17);
-
-  // ---- standings ----
-  const standingsConfs = ['AFC','NFC'].map(confKey=>{
-    const divisions = Object.keys(DEMO_DIVISIONS[confKey]).map(divKey=>{
-      const abbrs = DEMO_DIVISIONS[confKey][divKey];
-      const entries = abbrs.map(abbr=>{
-        const wins = rngInt(2, games-2);
-        const losses = games - wins;
-        const winPercent = games ? wins/games : 0;
-        const diff = rngInt(-140,160);
-        const streakLen = rngInt(1,4);
-        const streakType = Math.random()<0.5?'W':'L';
-        return {
-          team: demoTeamObj(abbr),
-          stats: [
-            {name:'wins', value:wins, displayValue:String(wins)},
-            {name:'losses', value:losses, displayValue:String(losses)},
-            {name:'ties', value:0, displayValue:'0'},
-            {name:'winPercent', value:winPercent, displayValue:winPercent.toFixed(3)},
-            {name:'pointDifferential', value:diff, displayValue:(diff>0?'+':'')+diff},
-            {name:'streak', value:streakLen, displayValue:`${streakType}${streakLen}`}
-          ]
-        };
-      });
-      return {name:`${confKey} ${divKey}`, standings:{entries}};
-    });
-    return {name: confKey==='AFC' ? 'American Football Conference' : 'National Football Conference', children:divisions};
-  });
-  const standings = {children: standingsConfs};
-
-  // ---- scores / schedule (shared pool of matchups) ----
-  const teamAbbrs = Object.keys(DEMO_TEAM_META);
-  const shuffled = teamAbbrs.slice().sort(()=>Math.random()-0.5);
-  const scores = [];
-  for(let i=0; i<shuffled.length-1; i+=2){
-    const home = shuffled[i], away = shuffled[i+1];
-    const roll = Math.random();
-    let state, shortDetail;
-    if(roll<0.15){ state='pre'; shortDetail='Sun 1:00 PM'; }
-    else if(roll<0.25){ state='in'; shortDetail=`Q${rngInt(1,4)} ${rngInt(1,14)}:${String(rngInt(0,59)).padStart(2,'0')}`; }
-    else { state='post'; shortDetail='Final'; }
-    const homeScore = state==='pre' ? null : rngInt(6,38);
-    const awayScore = state==='pre' ? null : rngInt(6,38);
-    const homeWin = state==='post' && homeScore>awayScore;
-    const awayWin = state==='post' && awayScore>homeScore;
-    const kickoffDate = new Date(Date.now() + rngInt(-2,4)*86400000);
-    kickoffDate.setHours(rngPick([13,16,17,20]), 0, 0, 0);
-    scores.push({
-      id:`demo-game-${i}`,
-      date: kickoffDate.toISOString(),
-      competitions:[{
-        competitors:[
-          {team:demoTeamObj(home), score: homeScore===null?null:String(homeScore), winner:homeWin},
-          {team:demoTeamObj(away), score: awayScore===null?null:String(awayScore), winner:awayWin}
-        ],
-        status:{type:{state, shortDetail}},
-        venue:{fullName:`${DEMO_TEAM_META[home].city} Stadium`, address:{city:DEMO_TEAM_META[home].city}}
-      }]
-    });
-  }
-
-  // ---- teams list ----
-  const teams = teamAbbrs.map(demoTeamObj);
-
-  // ---- injuries ----
-  const statuses = ['Questionable','Doubtful','Out'];
-  const injuryTypes = ['Hamstring','Ankle','Knee','Shoulder','Concussion protocol','Groin','Foot'];
-  const positions = ['QB','RB','WR','TE','LB','CB','S','DE','OL'];
-  const injuries = {};
-  teamAbbrs.forEach(abbr=>{
-    const count = rngInt(0,4);
-    const list = [];
-    for(let i=0;i<count;i++){
-      list.push({
-        athlete:{displayName:`${rngPick(DEMO_FIRST_NAMES)} ${rngPick(DEMO_LAST_NAMES)}`, position:{abbreviation:rngPick(positions)}},
-        status: rngPick(statuses),
-        details:{type: rngPick(injuryTypes)},
-        longComment: 'Limited in practice this week — status expected to firm up closer to gameday.'
-      });
-    }
-    injuries[abbr] = list;
-  });
-
-  return {teams, standings, scores, injuries};
-}
 
 async function buildCareerCache(onProgress){
   const careerMap = {}; // player_id -> aggregate record
