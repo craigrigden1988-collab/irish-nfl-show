@@ -1,6 +1,0 @@
-[build]
-  edge_functions = "netlify/edge-functions"
-
-[[edge_functions]]
-  function = "proxy"
-  path = "/proxy"
