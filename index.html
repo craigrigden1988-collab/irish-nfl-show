@@ -2067,17 +2067,19 @@ async function loadNflverseSeason(season){
 
   const offense = filteredOffense ? aggregateNflverseOffense(filteredOffense) : [];
   const defense = filteredDefense ? aggregateNflverseDefense(filteredDefense) : [];
+  const kicking = filteredOffense ? aggregateNflverseKicking(filteredOffense) : [];
+  const punting = filteredOffense ? aggregateNflversePunting(filteredOffense) : [];
 
   // Persist to IndexedDB so next load is instant
   try{
     const db = await openIDB();
     await new Promise((res,rej)=>{
-      const tx = db.transaction('nflverse','readwrite').objectStore('nflverse').put({key: String(season), offense, defense, ts: Date.now()});
+      const tx = db.transaction('nflverse','readwrite').objectStore('nflverse').put({key: String(season), offense, defense, kicking, punting, ts: Date.now()});
       tx.onsuccess = res; tx.onerror = rej;
     });
   }catch(e){ /* non-fatal */ }
 
-  nflverseSeasonCache = { season, offense, defense };
+  nflverseSeasonCache = { season, offense, defense, kicking, punting };
   return nflverseSeasonCache;
 }
 
@@ -2143,20 +2145,66 @@ function aggregateNflverseDefense(rows){
         player_display_name: r.player_display_name || r.player_name || id,
         position: r.position || '',
         recent_team: r.recent_team || r.team || '',
-        def_tackles:0, def_tackles_solo:0, def_tackle_assists:0,
+        def_tackles_combined:0, def_tackles_solo:0, def_tackle_assists:0,
         def_tackles_for_loss:0, def_tackles_for_loss_yards:0,
         def_fumbles_forced:0, def_sacks:0, def_sack_yards:0,
         def_qb_hits:0, def_interceptions:0, def_interception_yards:0,
-        def_pass_defended:0, def_tds:0, def_fumbles:0, def_safety:0,
+        def_pass_defended:0, def_tds:0, def_fumbles:0, def_safeties:0,
       };
     }
     const p = map[id];
-    ['def_tackles','def_tackles_solo','def_tackle_assists',
+    ['def_tackles_solo','def_tackle_assists',
      'def_tackles_for_loss','def_tackles_for_loss_yards',
      'def_fumbles_forced','def_sacks','def_sack_yards',
      'def_qb_hits','def_interceptions','def_interception_yards',
-     'def_pass_defended','def_tds','def_fumbles','def_safety',
+     'def_pass_defended','def_tds','def_fumbles','def_safeties',
     ].forEach(f=>{ p[f] += Number(r[f])||0; });
+    // combined tackles = solo + assists
+    p.def_tackles_combined = p.def_tackles_solo + p.def_tackle_assists;
+    if(r.recent_team) p.recent_team = r.recent_team;
+  });
+  return Object.values(map);
+}
+
+function aggregateNflverseKicking(rows){
+  const map = {};
+  rows.filter(r=>r && r.player_id && (r.season_type==='REG' || !r.season_type) && r.position==='K').forEach(r=>{
+    const id = r.player_id;
+    if(!map[id]){
+      map[id] = {
+        player_id: id,
+        player_display_name: r.player_display_name || r.player_name || id,
+        position: r.position || 'K',
+        recent_team: r.recent_team || '',
+        fg_made:0, fg_att:0, fg_long:0, pat_made:0, pat_att:0,
+      };
+    }
+    const p = map[id];
+    ['fg_made','fg_att','pat_made','pat_att'].forEach(f=>{ p[f] += Number(r[f])||0; });
+    p.fg_pct = p.fg_att > 0 ? Number((p.fg_made / p.fg_att * 100).toFixed(1)) : 0;
+    if(Number(r.fg_long) > (p.fg_long||0)) p.fg_long = Number(r.fg_long);
+    if(r.recent_team) p.recent_team = r.recent_team;
+  });
+  return Object.values(map);
+}
+
+function aggregateNflversePunting(rows){
+  const map = {};
+  rows.filter(r=>r && r.player_id && (r.season_type==='REG' || !r.season_type) && r.position==='P').forEach(r=>{
+    const id = r.player_id;
+    if(!map[id]){
+      map[id] = {
+        player_id: id,
+        player_display_name: r.player_display_name || r.player_name || id,
+        position: r.position || 'P',
+        recent_team: r.recent_team || '',
+        punts:0, punt_yards:0, punt_long:0, punt_net_yards:0,
+      };
+    }
+    const p = map[id];
+    ['punts','punt_yards','punt_net_yards'].forEach(f=>{ p[f] += Number(r[f])||0; });
+    p.punt_yards_per_att = p.punts > 0 ? Number((p.punt_yards / p.punts).toFixed(1)) : 0;
+    if(Number(r.punt_long) > (p.punt_long||0)) p.punt_long = Number(r.punt_long);
     if(r.recent_team) p.recent_team = r.recent_team;
   });
   return Object.values(map);
@@ -2206,10 +2254,10 @@ const STAT_TAB_CONFIG = {
     ]
   },
   defense: {
-    label: 'Defense', source: 'defense', primary: 'def_tackles',
+    label: 'Defense', source: 'defense', primary: 'def_tackles_combined',
     posFilter: null,
     cols: [
-      {key:'def_tackles',               label:'TKL'},
+      {key:'def_tackles_combined',      label:'TKL'},
       {key:'def_tackles_solo',          label:'SOLO'},
       {key:'def_sacks',                 label:'SACK'},
       {key:'def_tackles_for_loss',      label:'TFL'},
@@ -2231,25 +2279,26 @@ const STAT_TAB_CONFIG = {
     ]
   },
   kicking: {
-    label: 'Kicking', source: 'espn', primary: 'fieldGoalsMade',
+    label: 'Kicking', source: 'kicking', primary: 'fg_made',
+    posFilter: ['K'],
     cols: [
-      {key:'fieldGoalsMade',     label:'FGM',  espnCat:'fieldGoalsMade'},
-      {key:'fieldGoalAttempts',  label:'FGA',  espnCat:'fieldGoalAttempts'},
-      {key:'fieldGoalPct',       label:'FG%',  espnCat:'fieldGoalPct'},
-      {key:'longFieldGoal',      label:'LNG',  espnCat:'longFieldGoal'},
-      {key:'extraPointsMade',    label:'XPM',  espnCat:'extraPointsMade'},
-      {key:'extraPointAttempts', label:'XPA',  espnCat:'extraPointAttempts'},
+      {key:'fg_made',   label:'FGM'},
+      {key:'fg_att',    label:'FGA'},
+      {key:'fg_pct',    label:'FG%'},
+      {key:'fg_long',   label:'LNG'},
+      {key:'pat_made',  label:'XPM'},
+      {key:'pat_att',   label:'XPA'},
     ]
   },
   punting: {
-    label: 'Punting', source: 'espn', primary: 'puntYards',
+    label: 'Punting', source: 'punting', primary: 'punts',
+    posFilter: ['P'],
     cols: [
-      {key:'punts',          label:'PUNTS', espnCat:'punts'},
-      {key:'puntYards',      label:'YDS',   espnCat:'puntYards'},
-      {key:'yardsPerPunt',   label:'AVG',   espnCat:'yardsPerPunt'},
-      {key:'longPunt',       label:'LNG',   espnCat:'longPunt'},
-      {key:'puntsInside20',  label:'IN 20', espnCat:'puntsInside20'},
-      {key:'touchbacks',     label:'TB',    espnCat:'touchbacks'},
+      {key:'punts',              label:'PUNTS'},
+      {key:'punt_yards',         label:'YDS'},
+      {key:'punt_yards_per_att', label:'AVG'},
+      {key:'punt_long',          label:'LNG'},
+      {key:'punt_net_yards',     label:'NET YDS'},
     ]
   },
 };
@@ -2337,7 +2386,11 @@ async function renderStatCat(cat){
     }
 
     const cache = await loadNflverseSeason(currentStatsSeason);
-    let rows = tabInfo.source === 'defense' ? cache.defense : cache.offense;
+    let rows;
+    if(tabInfo.source === 'defense') rows = cache.defense;
+    else if(tabInfo.source === 'kicking') rows = cache.kicking || [];
+    else if(tabInfo.source === 'punting') rows = cache.punting || [];
+    else rows = cache.offense;
 
     // Apply position filter if set
     if(tabInfo.posFilter){
@@ -2356,7 +2409,11 @@ async function renderStatCat(cat){
       if(currentStatsSeason >= new Date().getFullYear()){
         const fallback = currentStatsSeason - 1;
         const fbCache = await loadNflverseSeason(fallback).catch(()=>null);
-        const fbRows = fbCache ? (tabInfo.source === 'defense' ? fbCache.defense : fbCache.offense) : [];
+        let fbRows;
+        if(tabInfo.source === 'defense') fbRows = fbCache?.defense || [];
+        else if(tabInfo.source === 'kicking') fbRows = fbCache?.kicking || [];
+        else if(tabInfo.source === 'punting') fbRows = fbCache?.punting || [];
+        else fbRows = fbCache?.offense || [];
         if(fbRows.length){
           // re-run with fallback season temporarily
           const saved = currentStatsSeason;
