@@ -2041,7 +2041,7 @@ async function loadNflverseSeason(season){
     return null;
   }
 
-  // Fetch offense CSV
+  // Fetch offense CSV — this file contains BOTH offensive and defensive stats
   let offenseRows = null;
   const offenseText = await fetchCsv(
     `/data/player_stats_offense_${season}.csv`,
@@ -2057,21 +2057,8 @@ async function loadNflverseSeason(season){
     }).catch(()=>null);
   }
 
-  // Fetch defense CSV
-  let defenseRows = null;
-  const defenseText = await fetchCsv(
-    `/data/player_stats_defense_${season}.csv`,
-    nflverseDefenseUrls(season)
-  );
-  if(defenseText){
-    defenseRows = await new Promise((res,rej)=>{
-      Papa.parse(defenseText, {
-        header:true, dynamicTyping:true, skipEmptyLines:true,
-        complete: r => r?.data?.length > 0 ? res(r.data) : rej(new Error('Empty')),
-        error: e => rej(e)
-      });
-    }).catch(()=>null);
-  }
+  // Defense data is in the same file as offense — no separate download needed
+  const defenseRows = offenseRows;
 
   const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
   const defense = defenseRows ? aggregateNflverseDefense(defenseRows) : [];
