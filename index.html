@@ -787,11 +787,9 @@ function setClock(){
 setClock(); setInterval(setClock,1000*30);
 
 // ---------- API CONFIG ----------
-// Set WORKER_URL to your deployed Cloudflare Worker URL.
-// When running locally (localhost) jget falls back to direct fetch + public proxies
-// so development still works without deploying first.
-// Proxy URL — Netlify Edge Function handles all ESPN/weather requests
-// In production this is the same domain as the app so no CORS issues
+// Your Cloudflare Worker URL — update this after deploying the worker.
+// Format: https://irish-nfl-worker.YOUR_SUBDOMAIN.workers.dev
+// Leave blank and it will fall back to public CORS proxies (slower, for local dev only).
 const WORKER_URL = 'https://irish-nfl-worker.irish-nfl.workers.dev';
 
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 min for ESPN responses in sessionStorage
@@ -808,7 +806,9 @@ async function jget(url){
 
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   let result;
+
   if(isLocal){
+    // Local dev: try direct fetch first, then public proxies as fallback
     try{ const r = await fetch(url); if(r.ok) result = await r.json(); }catch(e){}
     if(!result){
       for(const makeUrl of [
@@ -820,8 +820,10 @@ async function jget(url){
     }
     if(!result) throw new Error('All local fetch attempts failed for '+url);
   } else {
-    const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
-    if(!r.ok) throw new Error(`Proxy error ${r.status} for ${url}`);
+    // Production: route through Cloudflare Worker (fast, cached, no CORS issues)
+    const proxyUrl = `${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`;
+    const r = await fetch(proxyUrl);
+    if(!r.ok) throw new Error(`Worker error ${r.status} for ${url}`);
     result = await r.json();
   }
 
@@ -1228,7 +1230,7 @@ function renderDivisionStandings(data){
     (conf.children||[]).forEach(div=>{
       html += `<div class="div-title">${div.name}</div>`;
       html += `<table><thead><tr><th>Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th><th>DIFF</th><th>STRK</th></tr></thead><tbody>`;
-      const entries = div.standings.entries.slice().sort((a,b)=>{
+      const entries = (div.standings?.entries || []).slice().sort((a,b)=>{
         const av = a.stats.find(s=>s.name==='winPercent')?.value||0;
         const bv = b.stats.find(s=>s.name==='winPercent')?.value||0;
         return bv-av;
@@ -1975,9 +1977,9 @@ async function fetchTextWithProxyFallback(url){
     }
     throw new Error('fetchText: all attempts failed for '+url);
   }
-  // Production (Netlify): same-domain Edge Function
-  const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
-  if(!r.ok) throw new Error(`Proxy error ${r.status}`);
+  // Production: Cloudflare Worker
+  const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
+  if(!r.ok) throw new Error(`Worker error ${r.status}`);
   return await r.text();
 }
 
