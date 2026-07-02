@@ -365,7 +365,7 @@ tr:hover td{background:var(--panel2);}
 .team-header{display:flex;align-items:center;gap:14px;margin-bottom:14px;}
 .team-header img{width:54px;height:54px;object-fit:contain;}
 .team-header h2{margin:0;font-size:22px;color:var(--text);}
-.roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;}
+.roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;}
 .player-tile{
   background:var(--panel2);
   padding:8px 10px;
@@ -632,8 +632,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <button class="stat-cat" data-cat="receiving" onclick="selectStatCat('receiving')">Receiving</button>
         <button class="stat-cat" data-cat="defense" onclick="selectStatCat('defense')">Defense</button>
         <button class="stat-cat" data-cat="scoring" onclick="selectStatCat('scoring')">Scoring</button>
-        <button class="stat-cat" data-cat="kicking" onclick="selectStatCat('kicking')">Kicking</button>
-        <button class="stat-cat" data-cat="punting" onclick="selectStatCat('punting')">Punting</button>
       </div>
       <div id="playerStatsContent" class="loading">Loading…</div>
       <h2 style="margin-top:24px;" id="seasonHighsTitle">Season Highs</h2>
@@ -1455,13 +1453,13 @@ async function loadTeams(retrying){
     el.innerHTML = `<div class="roster-grid">${teams.map((t,i)=>{
       const record = t.record?.items?.[0]?.summary || '';
       const abbr = t.abbreviation;
-      return `<div class="player-tile" style="cursor:pointer;padding:16px;text-align:center;" onclick="openTeam('${abbr}')">
-        <div style="color:var(--muted);font-size:11px;text-align:left;margin-bottom:8px;">${i+1}</div>
-        <div style="display:flex;justify-content:center;margin-bottom:10px;">
-          ${teamLogoTag(abbr, 56)}
+      return `<div class="player-tile" style="cursor:pointer;padding:8px;text-align:center;" onclick="openTeam('${abbr}')">
+        <div style="color:var(--muted);font-size:10px;text-align:left;margin-bottom:4px;">${i+1}</div>
+        <div style="display:flex;justify-content:center;margin-bottom:6px;">
+          ${teamLogoTag(abbr, 32)}
         </div>
-        <div style="font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;">${t.displayName}</div>
-        ${record ? `<div style="color:var(--muted);font-size:13px;margin-top:4px;">${record}</div>` : ''}
+        <div style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:700;">${t.shortDisplayName||t.displayName}</div>
+        ${record ? `<div style="color:var(--muted);font-size:11px;margin-top:2px;">${record}</div>` : ''}
       </div>`;
     }).join('')}</div>`;
   }catch(e){
@@ -1729,28 +1727,28 @@ function renderInjuryItems(el, items){
   }
   const sorted = items.slice().sort((a,b)=> new Date(b.date||0) - new Date(a.date||0));
   const statusColor = (s)=> /out/i.test(s) ? '#e74c3c' : /quest|doubt/i.test(s) ? 'var(--orange)' : /probable/i.test(s) ? 'var(--green)' : 'var(--muted)';
-  let html = `<div class="roster-grid">`;
+  let html = `<table style="width:100%;font-size:13px;"><thead><tr>
+    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Player</th>
+    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Pos</th>
+    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Status</th>
+    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Injury</th>
+    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Est. Return</th>
+  </tr></thead><tbody>`;
   sorted.forEach(it=>{
     const name = it.athlete?.displayName || it.athlete?.name || '—';
     const pos = it.athlete?.position?.abbreviation || '-';
     const status = it.status || it.type?.description || '-';
     const injuryType = it.details?.type || '-';
-    const detail = it.shortComment || it.details?.detail || '';
-    const returnDate = it.details?.returnDate ? new Date(it.details.returnDate).toLocaleDateString('en-IE',{day:'numeric',month:'short',year:'numeric'}) : null;
-    html += `<div class="player-tile" style="padding:12px;">
-      <div class="player-tile-row">
-        <span class="player-name">${name}</span>
-        <span class="pos-tag">${pos}</span>
-      </div>
-      <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <span style="color:${statusColor(status)};font-weight:700;font-size:12px;">${status}</span>
-        <span style="color:var(--muted);font-size:12px;">${injuryType}</span>
-      </div>
-      ${detail ? `<div style="color:var(--muted);font-size:11px;margin-top:4px;line-height:1.4;">${detail.slice(0,120)}${detail.length>120?'…':''}</div>` : ''}
-      ${returnDate ? `<div style="color:var(--orange);font-size:11px;margin-top:4px;">Est. return: ${returnDate}</div>` : ''}
-    </div>`;
+    const returnDate = it.details?.returnDate ? new Date(it.details.returnDate).toLocaleDateString('en-IE',{day:'numeric',month:'short'}) : '—';
+    html += `<tr style="border-bottom:1px solid var(--line);">
+      <td style="padding:6px 8px;font-weight:600;">${name}</td>
+      <td style="padding:6px 8px;color:var(--muted);">${pos}</td>
+      <td style="padding:6px 8px;color:${statusColor(status)};font-weight:700;">${status}</td>
+      <td style="padding:6px 8px;color:var(--muted);">${injuryType}</td>
+      <td style="padding:6px 8px;color:var(--orange);">${returnDate}</td>
+    </tr>`;
   });
-  html += `</div>`;
+  html += `</tbody></table>`;
   el.innerHTML = html;
 }
 
