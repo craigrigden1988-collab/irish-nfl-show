@@ -14,15 +14,17 @@ const HEADERS = {
   'Accept': 'application/json, text/plain, */*',
 };
 
-// ── Season detection ────────────────────────────────────────────────────────
-// NFL season year = the year the season started (e.g. 2025 season runs Sept 2025 – Feb 2026)
+// NFL season year = the year the season started.
+// The 2025 season ran Sept 2025 – Feb 2026, so from Feb 2026 onwards we're
+// in the offseason and the most recent completed season is still 2025.
+// The 2026 season starts Sept 2026.
 function detectSeason() {
   if (process.env.OVERRIDE_SEASON) return parseInt(process.env.OVERRIDE_SEASON);
   const now = new Date();
   const month = now.getMonth() + 1; // 1–12
   const year  = now.getFullYear();
-  // Jan/Feb belong to the previous year's season
-  return month <= 2 ? year - 1 : year;
+  // Season starts in September — before Sept of current year, use previous year's season
+  return month < 9 ? year - 1 : year;
 }
 
 const SEASON = detectSeason();
@@ -164,24 +166,27 @@ async function main() {
     const assets = release.assets || [];
     console.log(`  Found ${assets.length} assets in stats_player release`);
 
-    // Find offense CSV for this season
+    // Find offense CSV for this season — files are named stats_player_reg_YEAR.csv
     const offenseAsset = assets.find(a =>
+      a.name === `stats_player_reg_${SEASON}.csv`
+    ) || assets.find(a =>
       a.name.endsWith('.csv') &&
       a.name.includes(String(SEASON)) &&
-      !a.name.includes('def') &&
-      !a.name.includes('kicking')
+      a.name.includes('reg') &&
+      !a.name.includes('def')
     );
     if(offenseAsset){
       console.log(`  Downloading offense: ${offenseAsset.name}`);
       offenseCSV = await fetchText('player stats (offense)', offenseAsset.browser_download_url);
     } else {
-      // Log available CSV files to help debug
       const csvFiles = assets.filter(a => a.name.endsWith('.csv')).map(a => a.name);
       console.log(`  No offense CSV found for ${SEASON}. Available CSVs:`, csvFiles.slice(0,10).join(', '));
     }
 
-    // Find defense CSV for this season
+    // Find defense CSV for this season — files are named stats_player_def_reg_YEAR.csv or similar
     const defenseAsset = assets.find(a =>
+      a.name === `stats_player_def_reg_${SEASON}.csv`
+    ) || assets.find(a =>
       a.name.endsWith('.csv') &&
       a.name.includes(String(SEASON)) &&
       a.name.includes('def')
