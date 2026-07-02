@@ -1,0 +1,38 @@
+name: Fetch NFL Data
+
+on:
+  schedule:
+    # Runs daily at 07:00 UTC (08:00 Irish time, before most people use the app)
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    # Also triggerable manually from the GitHub Actions tab
+    inputs:
+      season:
+        description: 'Season year (e.g. 2025). Leave blank to auto-detect.'
+        required: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch NFL data
+        run: node scripts/fetch-nfl-data.mjs
+        env:
+          OVERRIDE_SEASON: ${{ github.event.inputs.season }}
+
+      - name: Commit updated data files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '🏈 Auto-update NFL data [${{ github.run_number }}]'
+          file_pattern: 'data/**'
+          commit_user_name: 'Irish NFL Bot'
+          commit_user_email: 'bot@irish-nfl-show.app'
