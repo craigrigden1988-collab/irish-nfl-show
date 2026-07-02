@@ -152,23 +152,53 @@ async function main() {
   // 6. nflverse — current season player stats (offense + defense)
   //    Tries multiple URL patterns since nflverse restructures occasionally
   console.log('\nnflverse player stats…');
-  const offenseUrls = [
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_${SEASON}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${SEASON}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${SEASON}.csv`,
-  ];
-  const offenseCSV = await fetchFirstWorking('player stats (offense)', offenseUrls);
-  if (offenseCSV) {
+  // Query GitHub API to find the exact filenames in the stats_player release
+  console.log('\nnflverse player stats…');
+  let offenseCSV = null, defenseCSV = null;
+  try{
+    const apiResp = await fetch(
+      'https://api.github.com/repos/nflverse/nflverse-data/releases/tags/stats_player',
+      { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'IrishNFLShow/1.0' } }
+    );
+    const release = await apiResp.json();
+    const assets = release.assets || [];
+    console.log(`  Found ${assets.length} assets in stats_player release`);
+
+    // Find offense CSV for this season
+    const offenseAsset = assets.find(a =>
+      a.name.endsWith('.csv') &&
+      a.name.includes(String(SEASON)) &&
+      !a.name.includes('def') &&
+      !a.name.includes('kicking')
+    );
+    if(offenseAsset){
+      console.log(`  Downloading offense: ${offenseAsset.name}`);
+      offenseCSV = await fetchText('player stats (offense)', offenseAsset.browser_download_url);
+    } else {
+      // Log available CSV files to help debug
+      const csvFiles = assets.filter(a => a.name.endsWith('.csv')).map(a => a.name);
+      console.log(`  No offense CSV found for ${SEASON}. Available CSVs:`, csvFiles.slice(0,10).join(', '));
+    }
+
+    // Find defense CSV for this season
+    const defenseAsset = assets.find(a =>
+      a.name.endsWith('.csv') &&
+      a.name.includes(String(SEASON)) &&
+      a.name.includes('def')
+    );
+    if(defenseAsset){
+      console.log(`  Downloading defense: ${defenseAsset.name}`);
+      defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
+    }
+  }catch(e){
+    console.error(`  ✗  GitHub API query failed: ${e.message}`);
+  }
+
+  if(offenseCSV){
     save(`data/player_stats_offense_${SEASON}.csv`, offenseCSV);
     meta.endpoints.player_stats_offense = true;
   }
-
-  const defenseUrls = [
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_${SEASON}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${SEASON}.csv`,
-  ];
-  const defenseCSV = await fetchFirstWorking('player stats (defense)', defenseUrls);
-  if (defenseCSV) {
+  if(defenseCSV){
     save(`data/player_stats_defense_${SEASON}.csv`, defenseCSV);
     meta.endpoints.player_stats_defense = true;
   }
