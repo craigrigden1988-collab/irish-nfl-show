@@ -2060,8 +2060,12 @@ async function loadNflverseSeason(season){
   // Defense data is in the same file as offense — no separate download needed
   const defenseRows = offenseRows;
 
-  const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
-  const defense = defenseRows ? aggregateNflverseDefense(defenseRows) : [];
+  // Filter to only rows matching the requested season before aggregating
+  const filteredOffense = offenseRows ? offenseRows.filter(r => !r.season || Number(r.season) === season) : null;
+  const filteredDefense = filteredOffense;
+
+  const offense = filteredOffense ? aggregateNflverseOffense(filteredOffense) : [];
+  const defense = filteredDefense ? aggregateNflverseDefense(filteredDefense) : [];
 
   // Persist to IndexedDB so next load is instant
   try{
