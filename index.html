@@ -1937,24 +1937,34 @@ let statSortAsc = false;
 // and hand it to PapaParse, rather than letting PapaParse's own downloader hit the URL directly.
 async function fetchTextWithProxyFallback(url){
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  if(isLocal){
+
+  // Large CSV files from GitHub/nflverse can be several MB — Cloudflare Workers
+  // free tier has a 1MB response body limit so we must fetch these directly.
+  // GitHub's raw content and release assets don't have CORS restrictions for GET requests.
+  const isLargeCsv = url.includes('github.com') || url.includes('githubusercontent.com');
+
+  if(isLocal || isLargeCsv){
+    // Try direct fetch first — works fine from browsers for GitHub URLs
     try{
-      const r = await fetch(url);
+      const r = await fetch(url, { redirect: 'follow' });
       if(r.ok) return await r.text();
     }catch(e){}
-    for(const makeUrl of [
-      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    ]){
-      try{
-        const r = await fetch(makeUrl(url));
-        if(r.ok) return await r.text();
-      }catch(e){}
+    // Local dev fallback proxies
+    if(isLocal){
+      for(const makeUrl of [
+        u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+        u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      ]){
+        try{
+          const r = await fetch(makeUrl(url));
+          if(r.ok) return await r.text();
+        }catch(e){}
+      }
     }
     throw new Error('fetchText: all attempts failed for '+url);
   }
-  // Production (Netlify): same-domain Edge Function
-  // Production: Cloudflare Worker
+
+  // Production: Cloudflare Worker (for smaller JSON/API responses only)
   const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
   if(!r.ok) throw new Error(`Worker error ${r.status}`);
   return await r.text();
