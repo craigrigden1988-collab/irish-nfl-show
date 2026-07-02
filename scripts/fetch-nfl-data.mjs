@@ -183,7 +183,7 @@ async function main() {
       console.log(`  No offense CSV found for ${SEASON}. Available CSVs:`, csvFiles.slice(0,10).join(', '));
     }
 
-    // Find defense CSV for this season — files are named stats_player_def_reg_YEAR.csv or similar
+    // Find defense CSV for this season
     const defenseAsset = assets.find(a =>
       a.name === `stats_player_def_reg_${SEASON}.csv`
     ) || assets.find(a =>
@@ -191,6 +191,13 @@ async function main() {
       a.name.includes(String(SEASON)) &&
       a.name.includes('def')
     );
+    if(defenseAsset){
+      console.log(`  Downloading defense: ${defenseAsset.name}`);
+      defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
+    } else {
+      const defFiles = assets.filter(a => a.name.endsWith('.csv') && a.name.includes('def')).map(a => a.name);
+      console.log(`  No defense CSV found for ${SEASON}. Defense files available:`, defFiles.slice(0,10).join(', '));
+    }
     if(defenseAsset){
       console.log(`  Downloading defense: ${defenseAsset.name}`);
       defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
