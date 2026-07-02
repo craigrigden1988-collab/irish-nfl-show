@@ -366,6 +366,8 @@ tr:hover td{background:var(--panel2);}
 .team-header img{width:54px;height:54px;object-fit:contain;}
 .team-header h2{margin:0;font-size:22px;color:var(--text);}
 .roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;}
+.team-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}
+@media(max-width:900px){.team-grid{grid-template-columns:repeat(4,1fr);}}
 .player-tile{
   background:var(--panel2);
   padding:8px 10px;
@@ -1450,16 +1452,16 @@ async function loadTeams(retrying){
       return winsB - winsA;
     });
 
-    el.innerHTML = `<div class="roster-grid">${teams.map((t,i)=>{
+    el.innerHTML = `<div class="team-grid">${teams.map((t,i)=>{
       const record = t.record?.items?.[0]?.summary || '';
       const abbr = t.abbreviation;
-      return `<div class="player-tile" style="cursor:pointer;padding:8px;text-align:center;" onclick="openTeam('${abbr}')">
-        <div style="color:var(--muted);font-size:10px;text-align:left;margin-bottom:4px;">${i+1}</div>
-        <div style="display:flex;justify-content:center;margin-bottom:6px;">
-          ${teamLogoTag(abbr, 32)}
+      return `<div class="player-tile" style="cursor:pointer;padding:14px 10px;text-align:center;" onclick="openTeam('${abbr}')">
+        <div style="color:var(--muted);font-size:10px;text-align:left;margin-bottom:6px;">${i+1}</div>
+        <div style="display:flex;justify-content:center;margin-bottom:8px;">
+          ${teamLogoTag(abbr, 44)}
         </div>
-        <div style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:700;">${t.shortDisplayName||t.displayName}</div>
-        ${record ? `<div style="color:var(--muted);font-size:11px;margin-top:2px;">${record}</div>` : ''}
+        <div style="font-family:'Oswald',sans-serif;font-size:13px;font-weight:700;">${t.shortDisplayName||t.displayName}</div>
+        ${record ? `<div style="color:var(--muted);font-size:11px;margin-top:3px;">${record}</div>` : ''}
       </div>`;
     }).join('')}</div>`;
   }catch(e){
@@ -1727,28 +1729,24 @@ function renderInjuryItems(el, items){
   }
   const sorted = items.slice().sort((a,b)=> new Date(b.date||0) - new Date(a.date||0));
   const statusColor = (s)=> /out/i.test(s) ? '#e74c3c' : /quest|doubt/i.test(s) ? 'var(--orange)' : /probable/i.test(s) ? 'var(--green)' : 'var(--muted)';
-  let html = `<table style="width:100%;font-size:13px;"><thead><tr>
-    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Player</th>
-    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Pos</th>
-    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Status</th>
-    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Injury</th>
-    <th style="text-align:left;padding:6px 8px;color:var(--muted);font-weight:600;">Est. Return</th>
-  </tr></thead><tbody>`;
+  let html = `<div class="team-grid">`;
   sorted.forEach(it=>{
     const name = it.athlete?.displayName || it.athlete?.name || '—';
     const pos = it.athlete?.position?.abbreviation || '-';
     const status = it.status || it.type?.description || '-';
     const injuryType = it.details?.type || '-';
-    const returnDate = it.details?.returnDate ? new Date(it.details.returnDate).toLocaleDateString('en-IE',{day:'numeric',month:'short'}) : '—';
-    html += `<tr style="border-bottom:1px solid var(--line);">
-      <td style="padding:6px 8px;font-weight:600;">${name}</td>
-      <td style="padding:6px 8px;color:var(--muted);">${pos}</td>
-      <td style="padding:6px 8px;color:${statusColor(status)};font-weight:700;">${status}</td>
-      <td style="padding:6px 8px;color:var(--muted);">${injuryType}</td>
-      <td style="padding:6px 8px;color:var(--orange);">${returnDate}</td>
-    </tr>`;
+    const returnDate = it.details?.returnDate ? new Date(it.details.returnDate).toLocaleDateString('en-IE',{day:'numeric',month:'short'}) : null;
+    html += `<div class="player-tile" style="padding:14px 10px;text-align:center;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <span style="color:var(--muted);font-size:11px;">${pos}</span>
+        <span style="color:${statusColor(status)};font-size:11px;font-weight:700;">${status}</span>
+      </div>
+      <div style="font-family:'Oswald',sans-serif;font-size:13px;font-weight:700;margin-bottom:4px;">${name}</div>
+      <div style="color:var(--muted);font-size:11px;">${injuryType}</div>
+      ${returnDate ? `<div style="color:var(--orange);font-size:11px;margin-top:4px;">↩ ${returnDate}</div>` : ''}
+    </div>`;
   });
-  html += `</tbody></table>`;
+  html += `</div>`;
   el.innerHTML = html;
 }
 
