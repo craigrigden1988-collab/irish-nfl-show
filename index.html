@@ -1938,33 +1938,25 @@ let statSortAsc = false;
 async function fetchTextWithProxyFallback(url){
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-  // Large CSV files from GitHub/nflverse can be several MB — Cloudflare Workers
-  // free tier has a 1MB response body limit so we must fetch these directly.
-  // GitHub's raw content and release assets don't have CORS restrictions for GET requests.
-  const isLargeCsv = url.includes('github.com') || url.includes('githubusercontent.com');
-
-  if(isLocal || isLargeCsv){
-    // Try direct fetch first — works fine from browsers for GitHub URLs
+  if(isLocal){
     try{
       const r = await fetch(url, { redirect: 'follow' });
       if(r.ok) return await r.text();
     }catch(e){}
-    // Local dev fallback proxies
-    if(isLocal){
-      for(const makeUrl of [
-        u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-        u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      ]){
-        try{
-          const r = await fetch(makeUrl(url));
-          if(r.ok) return await r.text();
-        }catch(e){}
-      }
+    for(const makeUrl of [
+      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    ]){
+      try{
+        const r = await fetch(makeUrl(url));
+        if(r.ok) return await r.text();
+      }catch(e){}
     }
     throw new Error('fetchText: all attempts failed for '+url);
   }
 
-  // Production: Cloudflare Worker (for smaller JSON/API responses only)
+  // Production: always route through Cloudflare Worker
+  // GitHub release downloads have CORS restrictions so must go via Worker
   const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
   if(!r.ok) throw new Error(`Worker error ${r.status}`);
   return await r.text();
@@ -1998,6 +1990,7 @@ let nflverseSeasonCache = null; // { season, offense: [], defense: [] }
 function nflverseOffenseUrls(season){
   return [
     `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_season_${season}.csv`,
   ];
@@ -2006,6 +1999,7 @@ function nflverseOffenseUrls(season){
 function nflverseDefenseUrls(season){
   return [
     `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_def_${season}.csv`,
   ];
 }
