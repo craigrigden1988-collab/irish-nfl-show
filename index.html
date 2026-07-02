@@ -2286,12 +2286,15 @@ async function renderStatCat(cat){
         const fbCache = await loadNflverseSeason(fallback).catch(()=>null);
         const fbRows = fbCache ? (tabInfo.source === 'defense' ? fbCache.defense : fbCache.offense) : [];
         if(fbRows.length){
-          el.innerHTML = `<div class="src-note" style="margin-bottom:8px;">No ${currentStatsSeason} data yet — showing ${fallback} season.</div>`;
           // re-run with fallback season temporarily
           const saved = currentStatsSeason;
           currentStatsSeason = fallback;
           await renderStatCat(cat);
           currentStatsSeason = saved;
+          // Prepend the fallback note — renderStatCat overwrites el so we add after
+          el.insertAdjacentHTML('afterbegin',
+            `<div class="src-note" style="margin-bottom:8px;color:var(--orange);">⚠️ No ${saved} data yet — showing ${fallback} season.</div>`
+          );
           return;
         }
       }
