@@ -2025,15 +2025,52 @@ async function loadNflverseSeason(season){
   const el = document.getElementById('playerStatsContent');
   if(el) el.innerHTML = '<div class="loading">Fetching nflverse stats (first load — cached after this)…</div>';
 
+  // Try static pre-fetched files first (committed daily by GitHub Action)
+  // Fall back to fetching from nflverse directly via Worker
+  async function fetchCsv(staticPath, fallbackUrls){
+    try{
+      const r = await fetch(staticPath);
+      if(r.ok){
+        const text = await r.text();
+        if(text && text.length > 500) return text;
+      }
+    }catch(e){}
+    for(const url of fallbackUrls){
+      try{ return await fetchTextWithProxyFallback(url); }catch(e){}
+    }
+    return null;
+  }
+
   // Fetch offense CSV
   let offenseRows = null;
-  for(const url of nflverseOffenseUrls(season)){
-    try{ offenseRows = await csvFromUrl(url); break; }catch(e){}
+  const offenseText = await fetchCsv(
+    `/data/player_stats_offense_${season}.csv`,
+    nflverseOffenseUrls(season)
+  );
+  if(offenseText){
+    offenseRows = await new Promise((res,rej)=>{
+      Papa.parse(offenseText, {
+        header:true, dynamicTyping:true, skipEmptyLines:true,
+        complete: r => r?.data?.length > 0 ? res(r.data) : rej(new Error('Empty')),
+        error: e => rej(e)
+      });
+    }).catch(()=>null);
   }
+
   // Fetch defense CSV
   let defenseRows = null;
-  for(const url of nflverseDefenseUrls(season)){
-    try{ defenseRows = await csvFromUrl(url); break; }catch(e){}
+  const defenseText = await fetchCsv(
+    `/data/player_stats_defense_${season}.csv`,
+    nflverseDefenseUrls(season)
+  );
+  if(defenseText){
+    defenseRows = await new Promise((res,rej)=>{
+      Papa.parse(defenseText, {
+        header:true, dynamicTyping:true, skipEmptyLines:true,
+        complete: r => r?.data?.length > 0 ? res(r.data) : rej(new Error('Empty')),
+        error: e => rej(e)
+      });
+    }).catch(()=>null);
   }
 
   const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
