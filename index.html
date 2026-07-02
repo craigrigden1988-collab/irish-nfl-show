@@ -632,6 +632,7 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <button class="stat-cat" data-cat="receiving" onclick="selectStatCat('receiving')">Receiving</button>
         <button class="stat-cat" data-cat="defense" onclick="selectStatCat('defense')">Defense</button>
         <button class="stat-cat" data-cat="scoring" onclick="selectStatCat('scoring')">Scoring</button>
+        <button class="stat-cat" data-cat="kicking" onclick="selectStatCat('kicking')">Kicking</button>
         <button class="stat-cat" data-cat="punting" onclick="selectStatCat('punting')">Punting</button>
       </div>
       <div id="playerStatsContent" class="loading">Loading…</div>
@@ -2229,7 +2230,49 @@ const STAT_TAB_CONFIG = {
       {key:'special_teams_tds',         label:'ST TD'},
     ]
   },
+  kicking: {
+    label: 'Kicking', source: 'espn', primary: 'fieldGoalsMade',
+    cols: [
+      {key:'fieldGoalsMade',     label:'FGM',  espnCat:'fieldGoalsMade'},
+      {key:'fieldGoalAttempts',  label:'FGA',  espnCat:'fieldGoalAttempts'},
+      {key:'fieldGoalPct',       label:'FG%',  espnCat:'fieldGoalPct'},
+      {key:'longFieldGoal',      label:'LNG',  espnCat:'longFieldGoal'},
+      {key:'extraPointsMade',    label:'XPM',  espnCat:'extraPointsMade'},
+      {key:'extraPointAttempts', label:'XPA',  espnCat:'extraPointAttempts'},
+    ]
+  },
+  punting: {
+    label: 'Punting', source: 'espn', primary: 'puntYards',
+    cols: [
+      {key:'punts',          label:'PUNTS', espnCat:'punts'},
+      {key:'puntYards',      label:'YDS',   espnCat:'puntYards'},
+      {key:'yardsPerPunt',   label:'AVG',   espnCat:'yardsPerPunt'},
+      {key:'longPunt',       label:'LNG',   espnCat:'longPunt'},
+      {key:'puntsInside20',  label:'IN 20', espnCat:'puntsInside20'},
+      {key:'touchbacks',     label:'TB',    espnCat:'touchbacks'},
+    ]
+  },
 };
+
+// ESPN leaders — used for kicking and punting (not in nflverse offense CSV)
+let espnLeadersCache = null;
+async function fetchEspnLeaders(season){
+  if(espnLeadersCache?.season === season) return espnLeadersCache.categories;
+  const data = await jget(`https://site.api.espn.com/apis/site/v3/sports/football/nfl/leaders?season=${season}&seasontype=2`);
+  const categories = {};
+  (data.categories||[]).forEach(cat=>{
+    categories[cat.name] = (cat.leaders||[]).map((l,i)=>({
+      rank: i+1,
+      name: l.athlete?.displayName || '—',
+      team: l.athlete?.team?.abbreviation || '',
+      position: l.athlete?.position?.abbreviation || '',
+      value: l.value,
+      displayValue: l.displayValue ?? String(l.value),
+    }));
+  });
+  espnLeadersCache = { season, categories };
+  return categories;
+}
 
 async function loadPlayerStats(){
   renderStatCat(currentStatCat);
@@ -2259,11 +2302,40 @@ window.selectStatCat = selectStatCat;
 
 async function renderStatCat(cat){
   const el = document.getElementById('playerStatsContent');
-  el.innerHTML = '<div class="loading">Loading nflverse stats…</div>';
+  el.innerHTML = '<div class="loading">Loading stats…</div>';
   const tabInfo = STAT_TAB_CONFIG[cat];
   if(!tabInfo){ el.innerHTML = '<div class="loading">No data for this category.</div>'; return; }
 
   try{
+    // ESPN-sourced tabs (kicking, punting)
+    if(tabInfo.source === 'espn'){
+      const categories = await fetchEspnLeaders(currentStatsSeason);
+      const lookups = {};
+      tabInfo.cols.forEach(col=>{
+        const map = {};
+        (categories[col.espnCat]||[]).forEach(r=>{ map[`${r.name}|${r.team}`] = r; });
+        lookups[col.key] = map;
+      });
+      const primaryRows = (categories[tabInfo.primary]||[]).slice(0,50);
+      if(!primaryRows.length){
+        el.innerHTML = '<div class="loading">No data available for this season yet.</div>';
+        return;
+      }
+      statTableRows = primaryRows.map((r,i)=>{
+        const key = `${r.name}|${r.team}`;
+        const cols = {}, displayCols = {};
+        tabInfo.cols.forEach(col=>{
+          const entry = lookups[col.key][key];
+          cols[col.key] = entry?.value ?? null;
+          displayCols[col.key] = entry?.displayValue ?? '—';
+        });
+        return { rank:i+1, name:r.name, position:r.position||'—', team:r.team||'', cols, displayCols };
+      });
+      statSortKey = null; statSortAsc = false;
+      renderStatsTableHTML(tabInfo, el);
+      return;
+    }
+
     const cache = await loadNflverseSeason(currentStatsSeason);
     let rows = tabInfo.source === 'defense' ? cache.defense : cache.offense;
 
