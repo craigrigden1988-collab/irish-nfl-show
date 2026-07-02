@@ -515,7 +515,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   </div>
   <div class="clock" id="clock"></div>
   <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
-  <span id="dataFreshnessTag" style="display:none;font-size:11px;color:var(--muted);" title="When static data was last pre-fetched by the daily update job"></span>
   <button id="themeToggleBtn" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="toggleTheme()" title="Switch between dark and light mode">🌙 Dark</button>
   </div>
 </header>
@@ -633,7 +632,6 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
         <button class="stat-cat" data-cat="receiving" onclick="selectStatCat('receiving')">Receiving</button>
         <button class="stat-cat" data-cat="defense" onclick="selectStatCat('defense')">Defense</button>
         <button class="stat-cat" data-cat="scoring" onclick="selectStatCat('scoring')">Scoring</button>
-        <button class="stat-cat" data-cat="kicking" onclick="selectStatCat('kicking')">Kicking</button>
         <button class="stat-cat" data-cat="punting" onclick="selectStatCat('punting')">Punting</button>
       </div>
       <div id="playerStatsContent" class="loading">Loading…</div>
@@ -643,7 +641,15 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   </div>
   <div id="tab-records" class="tabpane" style="display:none">
     <div class="panel">
-      <h2>NFL All-Time Records (prior to the season) vs. This Season</h2>
+      <h2>NFL All-Time Records</h2>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+        <label style="color:var(--muted);font-size:13px;">Season for current leaders:</label>
+        <select id="recordsSeasonSelect" onchange="changeRecordsSeason(this.value)" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;">
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+          <option value="2023">2023</option>
+        </select>
+      </div>
       <div id="allTimeRecords"></div>
     </div>
   </div>
@@ -776,10 +782,12 @@ const TEST_WEEK = 18;
 let currentSeason = TEST_SEASON;
 let currentSeasonType = 0;
 
-// Per-tab season selection — independent for scores, schedule and standings
+// Per-tab season selection — independent for scores, schedule, standings and records
+// Default to 2025 since that's the most recently completed season
 let currentScoresSeason = 2026;
 let currentScheduleSeason = 2026;
 let currentStandingsSeason = 2026;
+let currentRecordsSeason = 2026;
 
 function setClock(){
   document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'});
@@ -787,9 +795,11 @@ function setClock(){
 setClock(); setInterval(setClock,1000*30);
 
 // ---------- API CONFIG ----------
-// Your Cloudflare Worker URL — update this after deploying the worker.
-// Format: https://irish-nfl-worker.YOUR_SUBDOMAIN.workers.dev
-// Leave blank and it will fall back to public CORS proxies (slower, for local dev only).
+// Set WORKER_URL to your deployed Cloudflare Worker URL.
+// When running locally (localhost) jget falls back to direct fetch + public proxies
+// so development still works without deploying first.
+// Proxy URL — Netlify Edge Function handles all ESPN/weather requests
+// In production this is the same domain as the app so no CORS issues
 const WORKER_URL = 'https://irish-nfl-worker.irish-nfl.workers.dev';
 
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 min for ESPN responses in sessionStorage
@@ -806,9 +816,7 @@ async function jget(url){
 
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   let result;
-
   if(isLocal){
-    // Local dev: try direct fetch first, then public proxies as fallback
     try{ const r = await fetch(url); if(r.ok) result = await r.json(); }catch(e){}
     if(!result){
       for(const makeUrl of [
@@ -820,9 +828,8 @@ async function jget(url){
     }
     if(!result) throw new Error('All local fetch attempts failed for '+url);
   } else {
-    // Production: route through Cloudflare Worker (fast, cached, no CORS issues)
-    const proxyUrl = `${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`;
-    const r = await fetch(proxyUrl);
+    // Production: Cloudflare Worker proxy
+    const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
     if(!r.ok) throw new Error(`Worker error ${r.status} for ${url}`);
     result = await r.json();
   }
@@ -830,41 +837,6 @@ async function jget(url){
   // Cache to sessionStorage (expires with tab close or TTL)
   try{ sessionStorage.setItem('jget:' + url, JSON.stringify({data: result, ts: Date.now()})); }catch(e){}
   return result;
-}
-
-// ---------- STATIC DATA CACHE (pre-fetched by GitHub Actions, served as static files) ----------
-// Reads from /data/*.json first — these are refreshed daily by the CI job.
-// Falls back to live ESPN via the proxy if the static file doesn't exist yet.
-let _dataMeta = null;
-async function getDataMeta(){
-  if(_dataMeta) return _dataMeta;
-  try{
-    const r = await fetch('/data/meta.json');
-    if(r.ok) _dataMeta = await r.json();
-  }catch(e){}
-  return _dataMeta;
-}
-
-async function fromCacheOrLive(cachePath, liveUrl){
-  try{
-    const r = await fetch(cachePath);
-    if(r.ok){
-      const data = await r.json();
-      if(data) return data;
-    }
-  }catch(e){}
-  return jget(liveUrl);
-}
-
-async function fromCacheTextOrLive(cachePath, liveUrl){
-  try{
-    const r = await fetch(cachePath);
-    if(r.ok){
-      const text = await r.text();
-      if(text && text.length > 100) return text;
-    }
-  }catch(e){}
-  return fetchTextWithProxyFallback(liveUrl);
 }
 
 // ---------- TABS ----------
@@ -935,25 +907,30 @@ function populateWeekDropdown(selectId, currentWeek, maxWeek){
 
 async function loadScores(){
   try{
-    const isCurrentSeason = currentScoresSeason >= new Date().getFullYear();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    // NFL season starts in September — if we're before Sep of the selected year it hasn't started
+    const seasonStartDate = new Date(`${currentScoresSeason}-09-01`);
+    const seasonNotStarted = currentScoresSeason > currentYear || (currentScoresSeason === currentYear && now < seasonStartDate);
+
+    if(seasonNotStarted){
+      document.getElementById('scoresContent').innerHTML = `<div class="loading">The ${currentScoresSeason} NFL season hasn't started yet. Switch to 2025 to view the most recent season.</div>`;
+      document.getElementById('tickerTrack').innerHTML = `<div class="tick-item">No games yet for ${currentScoresSeason}</div>`;
+      populateWeekDropdown('scoresWeekSelect', 1, 22);
+      return;
+    }
+
+    const isCurrentSeason = currentScoresSeason >= currentYear;
     if(selectedScoresWeek===null){
       if(isCurrentSeason){
-        // Try static cache first to discover current week without a proxy call
-        const meta = await getDataMeta();
-        if(meta?.current_week){ liveCurrentWeek = meta.current_week; selectedScoresWeek = liveCurrentWeek; }
-        else {
-          const data = await jget(`${API}/scoreboard`);
-          if(data.week?.number) liveCurrentWeek = data.week.number;
-          selectedScoresWeek = liveCurrentWeek || 1;
-        }
+        const data = await jget(`${API}/scoreboard`);
+        if(data.week?.number) liveCurrentWeek = data.week.number;
+        selectedScoresWeek = liveCurrentWeek || 1;
       } else {
         selectedScoresWeek = 18;
       }
     }
-    // Use static per-week file if available, otherwise hit live proxy
-    const cachePath = `/data/weeks/week_${selectedScoresWeek}.json`;
-    const liveUrl   = weekScoreboardUrl(selectedScoresWeek, currentScoresSeason);
-    const data = await fromCacheOrLive(cachePath, liveUrl);
+    const data = await jget(weekScoreboardUrl(selectedScoresWeek, currentScoresSeason));
     if(isCurrentSeason && data.week?.number) liveCurrentWeek = data.week.number;
     const events = data.events || [];
     populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
@@ -1190,12 +1167,8 @@ let liveCurrentWeek = null; // populated from ESPN's live scoreboard response, u
 
 async function loadStandings(){
   try{
-    const liveUrl = `${CORE}/standings?level=3&season=${currentStandingsSeason}&seasontype=2`;
-    // Use static cache for current season standings, live for historical
-    const isCurrentSeason = currentStandingsSeason >= new Date().getFullYear();
-    standingsCache = isCurrentSeason
-      ? await fromCacheOrLive('/data/standings.json', liveUrl)
-      : await jget(liveUrl);
+    const url = `${CORE}/standings?level=3&season=${currentStandingsSeason}&seasontype=2`;
+    standingsCache = await jget(url);
     renderStandingsView();
   }catch(e){
     document.getElementById('standingsContent').innerHTML = `<div class="err">Couldn't load standings.</div>`;
@@ -1255,8 +1228,11 @@ function renderDivisionStandings(data){
 const PLAYOFF_PICTURE_MIN_WEEK = 9;
 
 function renderPlayoffPicture(data){
+  // Only enforce the min-week guard for the current live season.
+  // For past seasons the standings are final so always show the full picture.
+  const isCurrentSeason = currentStandingsSeason >= new Date().getFullYear();
   const effectiveWeek = liveCurrentWeek || 0;
-  if(effectiveWeek < PLAYOFF_PICTURE_MIN_WEEK){
+  if(isCurrentSeason && effectiveWeek < PLAYOFF_PICTURE_MIN_WEEK){
     document.getElementById('standingsContent').innerHTML = `<div class="loading">
       Playoff picture activates after Week ${PLAYOFF_PICTURE_MIN_WEEK} — too early in the season for seeding to mean much before then.
       ${effectiveWeek ? `Currently Week ${effectiveWeek}.` : ''}
@@ -1466,7 +1442,7 @@ function scheduleRow(ev){
 async function loadTeams(retrying){
   const el = document.getElementById('teamsContent');
   try{
-    const json = await fromCacheOrLive('/data/teams.json', `${API}/teams?limit=32`);
+    const json = await jget(`${API}/teams?limit=32`);
     let teams = (json.sports[0].leagues[0].teams||[]).map(t=>t.team);
     allTeams = teams;
     teams = teams.slice().sort((a,b)=>{
@@ -1977,6 +1953,7 @@ async function fetchTextWithProxyFallback(url){
     }
     throw new Error('fetchText: all attempts failed for '+url);
   }
+  // Production (Netlify): same-domain Edge Function
   // Production: Cloudflare Worker
   const r = await fetch(`${WORKER_URL}/proxy?url=${encodeURIComponent(url)}`);
   if(!r.ok) throw new Error(`Worker error ${r.status}`);
@@ -2045,52 +2022,15 @@ async function loadNflverseSeason(season){
   const el = document.getElementById('playerStatsContent');
   if(el) el.innerHTML = '<div class="loading">Fetching nflverse stats (first load — cached after this)…</div>';
 
-  // Try static pre-fetched CSV files first (updated daily by GitHub Actions),
-  // then fall back to fetching directly from nflverse via the proxy
-  async function fetchCsv(staticPath, fallbackUrls){
-    try{
-      const r = await fetch(staticPath);
-      if(r.ok){
-        const text = await r.text();
-        if(text && text.length > 500) return text;
-      }
-    }catch(e){}
-    for(const url of fallbackUrls){
-      try{ return await fetchTextWithProxyFallback(url); }catch(e){}
-    }
-    return null;
-  }
-
   // Fetch offense CSV
   let offenseRows = null;
-  const offenseText = await fetchCsv(
-    `/data/player_stats_offense_${season}.csv`,
-    nflverseOffenseUrls(season)
-  );
-  if(offenseText){
-    offenseRows = await new Promise((res,rej)=>{
-      Papa.parse(offenseText, {
-        header:true, dynamicTyping:true, skipEmptyLines:true,
-        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
-        error: e => rej(e)
-      });
-    });
+  for(const url of nflverseOffenseUrls(season)){
+    try{ offenseRows = await csvFromUrl(url); break; }catch(e){}
   }
-
   // Fetch defense CSV
   let defenseRows = null;
-  const defenseText = await fetchCsv(
-    `/data/player_stats_defense_${season}.csv`,
-    nflverseDefenseUrls(season)
-  );
-  if(defenseText){
-    defenseRows = await new Promise((res,rej)=>{
-      Papa.parse(defenseText, {
-        header:true, dynamicTyping:true, skipEmptyLines:true,
-        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
-        error: e => rej(e)
-      });
-    });
+  for(const url of nflverseDefenseUrls(season)){
+    try{ defenseRows = await csvFromUrl(url); break; }catch(e){}
   }
 
   const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
@@ -2190,29 +2130,7 @@ function aggregateNflverseDefense(rows){
   return Object.values(map);
 }
 
-// ---------- ESPN LEADERS (used for kicking, punting, and defense fallback) ----------
-let espnLeadersCache = null;
-
-async function fetchEspnLeaders(season){
-  if(espnLeadersCache?.season === season) return espnLeadersCache.categories;
-  const data = await jget(`https://site.api.espn.com/apis/site/v3/sports/football/nfl/leaders?season=${season}&seasontype=2`);
-  const categories = {};
-  (data.categories||[]).forEach(cat=>{
-    const name = cat.name;
-    categories[name] = (cat.leaders||[]).map((l,i)=>({
-      rank: i+1,
-      name: l.athlete?.displayName || '—',
-      team: l.athlete?.team?.abbreviation || '',
-      position: l.athlete?.position?.abbreviation || '',
-      value: l.value,
-      displayValue: l.displayValue ?? String(l.value),
-    }));
-  });
-  espnLeadersCache = { season, categories };
-  return categories;
-}
-
-// Stat tab config — nflverse field names for offense tabs, ESPN leaders for kicking/punting
+// Stat tab config — now mapped to nflverse field names
 const STAT_TAB_CONFIG = {
   passing: {
     label: 'Passing', source: 'offense', primary: 'passing_yards',
@@ -2280,30 +2198,6 @@ const STAT_TAB_CONFIG = {
       {key:'special_teams_tds',         label:'ST TD'},
     ]
   },
-  kicking: {
-    label: 'Kicking', source: 'espn', primary: 'fieldGoalsMade',
-    posFilter: null,
-    cols: [
-      {key:'fieldGoalsMade',     label:'FGM',  espnCat:'fieldGoalsMade'},
-      {key:'fieldGoalAttempts',  label:'FGA',  espnCat:'fieldGoalAttempts'},
-      {key:'fieldGoalPct',       label:'FG%',  espnCat:'fieldGoalPct'},
-      {key:'longFieldGoal',      label:'LNG',  espnCat:'longFieldGoal'},
-      {key:'extraPointsMade',    label:'XPM',  espnCat:'extraPointsMade'},
-      {key:'extraPointAttempts', label:'XPA',  espnCat:'extraPointAttempts'},
-    ]
-  },
-  punting: {
-    label: 'Punting', source: 'espn', primary: 'puntYards',
-    posFilter: null,
-    cols: [
-      {key:'punts',          label:'PUNTS', espnCat:'punts'},
-      {key:'puntYards',      label:'YDS',   espnCat:'puntYards'},
-      {key:'yardsPerPunt',   label:'AVG',   espnCat:'yardsPerPunt'},
-      {key:'longPunt',       label:'LNG',   espnCat:'longPunt'},
-      {key:'puntsInside20',  label:'IN 20', espnCat:'puntsInside20'},
-      {key:'touchbacks',     label:'TB',    espnCat:'touchbacks'},
-    ]
-  },
 };
 
 async function loadPlayerStats(){
@@ -2334,90 +2228,20 @@ window.selectStatCat = selectStatCat;
 
 async function renderStatCat(cat){
   const el = document.getElementById('playerStatsContent');
-  el.innerHTML = '<div class="loading">Loading stats…</div>';
+  el.innerHTML = '<div class="loading">Loading nflverse stats…</div>';
   const tabInfo = STAT_TAB_CONFIG[cat];
   if(!tabInfo){ el.innerHTML = '<div class="loading">No data for this category.</div>'; return; }
 
   try{
-    // ── ESPN-sourced tabs (kicking, punting) ──────────────────────────────
-    if(tabInfo.source === 'espn'){
-      const categories = await fetchEspnLeaders(currentStatsSeason);
-      // Build rows from the primary category, look up other columns by name+team
-      const lookups = {};
-      tabInfo.cols.forEach(col=>{
-        const map = {};
-        (categories[col.espnCat]||[]).forEach(r=>{ map[`${r.name}|${r.team}`] = r; });
-        lookups[col.key] = map;
-      });
-      const primaryRows = (categories[tabInfo.primary]||[]).slice(0,50);
-      if(!primaryRows.length){
-        el.innerHTML = '<div class="loading">No data available for this season yet.</div>';
-        return;
-      }
-      statTableRows = primaryRows.map((r,i)=>{
-        const key = `${r.name}|${r.team}`;
-        const cols = {}, displayCols = {};
-        tabInfo.cols.forEach(col=>{
-          const entry = lookups[col.key][key];
-          cols[col.key] = entry?.value ?? null;
-          displayCols[col.key] = entry?.displayValue ?? '—';
-        });
-        return { rank:i+1, name:r.name, position:r.position||'—', team:r.team||'', cols, displayCols };
-      });
-      statSortKey = null; statSortAsc = false;
-      renderStatsTableHTML(tabInfo, el);
-      return;
-    }
-
-    // ── nflverse-sourced tabs (offense + defense) ─────────────────────────
     const cache = await loadNflverseSeason(currentStatsSeason);
     let rows = tabInfo.source === 'defense' ? cache.defense : cache.offense;
-
-    // Defense fallback: if nflverse defense is empty, use ESPN leaders
-    if(tabInfo.source === 'defense' && (!rows || rows.length === 0)){
-      const categories = await fetchEspnLeaders(currentStatsSeason);
-      const espnDefCols = [
-        {key:'def_tackles',          label:'TKL',    espnCat:'totalTackles'},
-        {key:'def_tackles_solo',     label:'SOLO',   espnCat:'soloTackles'},
-        {key:'def_sacks',            label:'SACK',   espnCat:'sacks'},
-        {key:'def_tackles_for_loss', label:'TFL',    espnCat:'tacklesForLoss'},
-        {key:'def_fumbles_forced',   label:'FF',     espnCat:'forcedFumbles'},
-        {key:'def_interceptions',    label:'INT',    espnCat:'defensiveInterceptions'},
-        {key:'def_pass_defended',    label:'PD',     espnCat:'passesDefended'},
-        {key:'def_qb_hits',          label:'QB HIT', espnCat:'qbHits'},
-      ];
-      const lookups = {};
-      espnDefCols.forEach(col=>{
-        const map = {};
-        (categories[col.espnCat]||[]).forEach(r=>{ map[`${r.name}|${r.team}`] = r; });
-        lookups[col.key] = map;
-      });
-      const primaryRows = (categories['totalTackles']||[]).slice(0,50);
-      if(!primaryRows.length){
-        el.innerHTML = '<div class="loading">No defense data available for this season yet.</div>';
-        return;
-      }
-      statTableRows = primaryRows.map((r,i)=>{
-        const key = `${r.name}|${r.team}`;
-        const cols = {}, displayCols = {};
-        espnDefCols.forEach(col=>{
-          const entry = lookups[col.key][key];
-          cols[col.key] = entry?.value ?? null;
-          displayCols[col.key] = entry?.displayValue ?? '—';
-        });
-        return { rank:i+1, name:r.name, position:r.position||'—', team:r.team||'', cols, displayCols };
-      });
-      statSortKey = null; statSortAsc = false;
-      // Override col labels to match ESPN fallback
-      renderStatsTableHTML({...tabInfo, cols: espnDefCols}, el);
-      return;
-    }
 
     // Apply position filter if set
     if(tabInfo.posFilter){
       rows = rows.filter(r=> tabInfo.posFilter.includes(r.position));
     }
 
+    // Sort by primary stat descending, minimum threshold to filter out non-contributors
     rows = rows
       .filter(r=> (Number(r[tabInfo.primary])||0) > 0)
       .sort((a,b)=> (Number(b[tabInfo.primary])||0) - (Number(a[tabInfo.primary])||0))
@@ -2425,6 +2249,21 @@ async function renderStatCat(cat){
 
     if(!rows.length){
       el.innerHTML = '<div class="loading">No data available for this season yet — nflverse may not have published it.</div>';
+      // Auto-fallback: if we tried 2026 and got nothing, try 2025 automatically
+      if(currentStatsSeason >= new Date().getFullYear()){
+        const fallback = currentStatsSeason - 1;
+        const fbCache = await loadNflverseSeason(fallback).catch(()=>null);
+        const fbRows = fbCache ? (tabInfo.source === 'defense' ? fbCache.defense : fbCache.offense) : [];
+        if(fbRows.length){
+          el.innerHTML = `<div class="src-note" style="margin-bottom:8px;">No ${currentStatsSeason} data yet — showing ${fallback} season.</div>`;
+          // re-run with fallback season temporarily
+          const saved = currentStatsSeason;
+          currentStatsSeason = fallback;
+          await renderStatCat(cat);
+          currentStatsSeason = saved;
+          return;
+        }
+      }
       return;
     }
 
@@ -2434,6 +2273,7 @@ async function renderStatCat(cat){
         const raw = r[col.key];
         const num = raw !== null && raw !== undefined ? Number(raw) : null;
         cols[col.key] = num;
+        // Format nicely: round floats to 1dp, show integers as integers
         if(num === null) displayCols[col.key] = '—';
         else if(Number.isInteger(num)) displayCols[col.key] = String(num);
         else displayCols[col.key] = Number(num).toFixed(1);
@@ -2521,21 +2361,7 @@ async function ensureGamesCache(){
     return; // cache is fresh enough
   }
   try{
-    // Try static pre-fetched file first (updated daily by GitHub Actions)
-    let text;
-    try{
-      const r = await fetch('/data/games.csv');
-      if(r.ok) text = await r.text();
-    }catch(e){}
-    // Fall back to fetching from nflverse directly
-    if(!text || text.length < 500) text = await fetchTextWithProxyFallback(GAMES_HISTORY_URL);
-    const rows = await new Promise((res,rej)=>{
-      Papa.parse(text, {
-        header:true, dynamicTyping:true, skipEmptyLines:true,
-        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
-        error: e => rej(e)
-      });
-    });
+    const rows = await csvFromUrl(GAMES_HISTORY_URL);
     const withIds = rows.filter(r=>r && r.game_id).map(r=>({...r, game_id:String(r.game_id)}));
     await idbPutAll('games', withIds);
     await idbSetMeta('games_synced_at', true);
@@ -2657,9 +2483,18 @@ async function renderAllTimeRecords(){
   const el = document.getElementById('allTimeRecords');
   el.innerHTML = '<div class="loading">Loading…</div>';
 
-  // Try to get nflverse season data for current-season column
+  // Try to get nflverse season data for the selected records season
+  // If the selected year has no data yet, fall back to the previous season
   let nflCache = null;
-  try{ nflCache = await loadNflverseSeason(currentStatsSeason); }catch(e){}
+  let recordsDisplaySeason = currentRecordsSeason;
+  try{
+    nflCache = await loadNflverseSeason(currentRecordsSeason);
+    // Check if we actually got useful data
+    if((!nflCache?.offense?.length && !nflCache?.defense?.length) && currentRecordsSeason >= new Date().getFullYear()){
+      recordsDisplaySeason = currentRecordsSeason - 1;
+      nflCache = await loadNflverseSeason(recordsDisplaySeason);
+    }
+  }catch(e){}
 
   const currentSeasonLine = (r)=>{
     if(!r.key || !nflCache) return null;
@@ -2672,7 +2507,7 @@ async function renderAllTimeRecords(){
     if(!rows.length) return null;
     const top = rows[0];
     const val = Number.isInteger(Number(top[nflKey])) ? top[nflKey] : Number(top[nflKey]).toFixed(1);
-    return `${currentStatsSeason}: ${top.player_display_name} (${top.recent_team}) — ${val}`;
+    return `${recordsDisplaySeason}: ${top.player_display_name} (${top.recent_team}) — ${val}`;
   };
 
   const groups = {};
@@ -2694,9 +2529,16 @@ async function renderAllTimeRecords(){
     });
     html += `</tbody></table>`;
   });
-  html += `<div class="src-note">All-time records verified as of the most recent completed season. Current season leader shown in orange via nflverse.</div>`;
+  html += `<div class="src-note">All-time records verified as of the most recent completed season. ${recordsDisplaySeason} season leader shown in orange via nflverse${recordsDisplaySeason !== currentRecordsSeason ? ` (no ${currentRecordsSeason} data yet)` : ''}.</div>`;
   el.innerHTML = html;
 }
+
+function changeRecordsSeason(season){
+  currentRecordsSeason = parseInt(season);
+  document.getElementById('recordsSeasonSelect').value = String(currentRecordsSeason);
+  loadRecords();
+}
+window.changeRecordsSeason = changeRecordsSeason;
 
 async function loadRecords(){
   renderAllTimeRecords();
@@ -2946,20 +2788,6 @@ async function init(){
     const saved = await idbGetMeta('theme');
     if(saved && saved.value) await applyTheme(saved.value);
   }catch(e){ /* default to dark if no preference saved yet */ }
-
-  // Show when static data was last pre-fetched by the GitHub Action
-  getDataMeta().then(meta=>{
-    if(meta?.generated_at){
-      const el = document.getElementById('dataFreshnessTag');
-      if(el){
-        const d = new Date(meta.generated_at);
-        const label = d.toLocaleDateString('en-IE',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-        el.textContent = `🔄 Data: ${label}`;
-        el.style.display = 'inline';
-      }
-    }
-  }).catch(()=>{});
-
   await loadTeams();
   await loadScores();
   loadStandings();
