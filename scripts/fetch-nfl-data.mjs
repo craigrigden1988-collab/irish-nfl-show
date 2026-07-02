@@ -153,9 +153,9 @@ async function main() {
   //    Tries multiple URL patterns since nflverse restructures occasionally
   console.log('\nnflverse player stats…');
   const offenseUrls = [
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${SEASON}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_${SEASON}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${SEASON}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_season_${SEASON}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${SEASON}.csv`,
   ];
   const offenseCSV = await fetchFirstWorking('player stats (offense)', offenseUrls);
   if (offenseCSV) {
@@ -164,8 +164,8 @@ async function main() {
   }
 
   const defenseUrls = [
+    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_${SEASON}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${SEASON}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_def_${SEASON}.csv`,
   ];
   const defenseCSV = await fetchFirstWorking('player stats (defense)', defenseUrls);
   if (defenseCSV) {
