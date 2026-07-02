@@ -1989,18 +1989,16 @@ let nflverseSeasonCache = null; // { season, offense: [], defense: [] }
 
 function nflverseOffenseUrls(season){
   return [
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${season}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_season_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`,
   ];
 }
 
 function nflverseDefenseUrls(season){
   return [
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_${season}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_def_${season}.csv`,
+    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${season}.csv`,
   ];
 }
 
