@@ -515,6 +515,7 @@ th.sort-active.sort-asc::after{content:' ↑';font-size:10px;}
   </div>
   <div class="clock" id="clock"></div>
   <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+  <span id="dataFreshnessTag" style="display:none;font-size:11px;color:var(--muted);" title="When static data was last pre-fetched by the daily update job"></span>
   <button id="themeToggleBtn" style="font-family:'Oswald',sans-serif;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 10px;border-radius:6px;cursor:pointer;" onclick="toggleTheme()" title="Switch between dark and light mode">🌙 Dark</button>
   </div>
 </header>
@@ -828,6 +829,41 @@ async function jget(url){
   return result;
 }
 
+// ---------- STATIC DATA CACHE (pre-fetched by GitHub Actions, served as static files) ----------
+// Reads from /data/*.json first — these are refreshed daily by the CI job.
+// Falls back to live ESPN via the proxy if the static file doesn't exist yet.
+let _dataMeta = null;
+async function getDataMeta(){
+  if(_dataMeta) return _dataMeta;
+  try{
+    const r = await fetch('/data/meta.json');
+    if(r.ok) _dataMeta = await r.json();
+  }catch(e){}
+  return _dataMeta;
+}
+
+async function fromCacheOrLive(cachePath, liveUrl){
+  try{
+    const r = await fetch(cachePath);
+    if(r.ok){
+      const data = await r.json();
+      if(data) return data;
+    }
+  }catch(e){}
+  return jget(liveUrl);
+}
+
+async function fromCacheTextOrLive(cachePath, liveUrl){
+  try{
+    const r = await fetch(cachePath);
+    if(r.ok){
+      const text = await r.text();
+      if(text && text.length > 100) return text;
+    }
+  }catch(e){}
+  return fetchTextWithProxyFallback(liveUrl);
+}
+
 // ---------- TABS ----------
 const tabs = document.querySelectorAll('nav > button, .nav-dropdown button');
 tabs.forEach(btn=>{
@@ -899,14 +935,22 @@ async function loadScores(){
     const isCurrentSeason = currentScoresSeason >= new Date().getFullYear();
     if(selectedScoresWeek===null){
       if(isCurrentSeason){
-        const data = await jget(`${API}/scoreboard`);
-        if(data.week?.number) liveCurrentWeek = data.week.number;
-        selectedScoresWeek = liveCurrentWeek || 1;
+        // Try static cache first to discover current week without a proxy call
+        const meta = await getDataMeta();
+        if(meta?.current_week){ liveCurrentWeek = meta.current_week; selectedScoresWeek = liveCurrentWeek; }
+        else {
+          const data = await jget(`${API}/scoreboard`);
+          if(data.week?.number) liveCurrentWeek = data.week.number;
+          selectedScoresWeek = liveCurrentWeek || 1;
+        }
       } else {
-        selectedScoresWeek = 18; // default to week 18 for past seasons
+        selectedScoresWeek = 18;
       }
     }
-    const data = await jget(weekScoreboardUrl(selectedScoresWeek, currentScoresSeason));
+    // Use static per-week file if available, otherwise hit live proxy
+    const cachePath = `/data/weeks/week_${selectedScoresWeek}.json`;
+    const liveUrl   = weekScoreboardUrl(selectedScoresWeek, currentScoresSeason);
+    const data = await fromCacheOrLive(cachePath, liveUrl);
     if(isCurrentSeason && data.week?.number) liveCurrentWeek = data.week.number;
     const events = data.events || [];
     populateWeekDropdown('scoresWeekSelect', selectedScoresWeek, 22);
@@ -1143,8 +1187,12 @@ let liveCurrentWeek = null; // populated from ESPN's live scoreboard response, u
 
 async function loadStandings(){
   try{
-    const url = `${CORE}/standings?level=3&season=${currentStandingsSeason}&seasontype=2`;
-    standingsCache = await jget(url);
+    const liveUrl = `${CORE}/standings?level=3&season=${currentStandingsSeason}&seasontype=2`;
+    // Use static cache for current season standings, live for historical
+    const isCurrentSeason = currentStandingsSeason >= new Date().getFullYear();
+    standingsCache = isCurrentSeason
+      ? await fromCacheOrLive('/data/standings.json', liveUrl)
+      : await jget(liveUrl);
     renderStandingsView();
   }catch(e){
     document.getElementById('standingsContent').innerHTML = `<div class="err">Couldn't load standings.</div>`;
@@ -1415,7 +1463,7 @@ function scheduleRow(ev){
 async function loadTeams(retrying){
   const el = document.getElementById('teamsContent');
   try{
-    const json = await jget(`${API}/teams?limit=32`);
+    const json = await fromCacheOrLive('/data/teams.json', `${API}/teams?limit=32`);
     let teams = (json.sports[0].leagues[0].teams||[]).map(t=>t.team);
     allTeams = teams;
     teams = teams.slice().sort((a,b)=>{
@@ -1994,15 +2042,52 @@ async function loadNflverseSeason(season){
   const el = document.getElementById('playerStatsContent');
   if(el) el.innerHTML = '<div class="loading">Fetching nflverse stats (first load — cached after this)…</div>';
 
+  // Try static pre-fetched CSV files first (updated daily by GitHub Actions),
+  // then fall back to fetching directly from nflverse via the proxy
+  async function fetchCsv(staticPath, fallbackUrls){
+    try{
+      const r = await fetch(staticPath);
+      if(r.ok){
+        const text = await r.text();
+        if(text && text.length > 500) return text;
+      }
+    }catch(e){}
+    for(const url of fallbackUrls){
+      try{ return await fetchTextWithProxyFallback(url); }catch(e){}
+    }
+    return null;
+  }
+
   // Fetch offense CSV
   let offenseRows = null;
-  for(const url of nflverseOffenseUrls(season)){
-    try{ offenseRows = await csvFromUrl(url); break; }catch(e){}
+  const offenseText = await fetchCsv(
+    `/data/player_stats_offense_${season}.csv`,
+    nflverseOffenseUrls(season)
+  );
+  if(offenseText){
+    offenseRows = await new Promise((res,rej)=>{
+      Papa.parse(offenseText, {
+        header:true, dynamicTyping:true, skipEmptyLines:true,
+        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
+        error: e => rej(e)
+      });
+    });
   }
+
   // Fetch defense CSV
   let defenseRows = null;
-  for(const url of nflverseDefenseUrls(season)){
-    try{ defenseRows = await csvFromUrl(url); break; }catch(e){}
+  const defenseText = await fetchCsv(
+    `/data/player_stats_defense_${season}.csv`,
+    nflverseDefenseUrls(season)
+  );
+  if(defenseText){
+    defenseRows = await new Promise((res,rej)=>{
+      Papa.parse(defenseText, {
+        header:true, dynamicTyping:true, skipEmptyLines:true,
+        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
+        error: e => rej(e)
+      });
+    });
   }
 
   const offense = offenseRows ? aggregateNflverseOffense(offenseRows) : [];
@@ -2318,7 +2403,21 @@ async function ensureGamesCache(){
     return; // cache is fresh enough
   }
   try{
-    const rows = await csvFromUrl(GAMES_HISTORY_URL);
+    // Try static pre-fetched file first (updated daily by GitHub Actions)
+    let text;
+    try{
+      const r = await fetch('/data/games.csv');
+      if(r.ok) text = await r.text();
+    }catch(e){}
+    // Fall back to fetching from nflverse directly
+    if(!text || text.length < 500) text = await fetchTextWithProxyFallback(GAMES_HISTORY_URL);
+    const rows = await new Promise((res,rej)=>{
+      Papa.parse(text, {
+        header:true, dynamicTyping:true, skipEmptyLines:true,
+        complete: r => r?.data?.length>0 ? res(r.data) : rej(new Error('Empty')),
+        error: e => rej(e)
+      });
+    });
     const withIds = rows.filter(r=>r && r.game_id).map(r=>({...r, game_id:String(r.game_id)}));
     await idbPutAll('games', withIds);
     await idbSetMeta('games_synced_at', true);
@@ -2729,6 +2828,20 @@ async function init(){
     const saved = await idbGetMeta('theme');
     if(saved && saved.value) await applyTheme(saved.value);
   }catch(e){ /* default to dark if no preference saved yet */ }
+
+  // Show when static data was last pre-fetched by the GitHub Action
+  getDataMeta().then(meta=>{
+    if(meta?.generated_at){
+      const el = document.getElementById('dataFreshnessTag');
+      if(el){
+        const d = new Date(meta.generated_at);
+        const label = d.toLocaleDateString('en-IE',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+        el.textContent = `🔄 Data: ${label}`;
+        el.style.display = 'inline';
+      }
+    }
+  }).catch(()=>{});
+
   await loadTeams();
   await loadScores();
   loadStandings();
