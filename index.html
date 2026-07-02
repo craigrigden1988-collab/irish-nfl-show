@@ -799,8 +799,7 @@ setClock(); setInterval(setClock,1000*30);
 // Set WORKER_URL to your deployed Cloudflare Worker URL.
 // When running locally (localhost) jget falls back to direct fetch + public proxies
 // so development still works without deploying first.
-// Proxy URL — Netlify Edge Function handles all ESPN/weather requests
-// In production this is the same domain as the app so no CORS issues
+// Cloudflare Worker handles all ESPN/weather requests in production.
 const WORKER_URL = 'https://irish-nfl-worker.irish-nfl.workers.dev';
 
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 min for ESPN responses in sessionStorage
@@ -1583,16 +1582,6 @@ async function loadTeamRoster(abbr){
 }
 
 // position group → which stat category to surface as "key stats"
-function statCategoryForPosition(pos){
-  if(['QB'].includes(pos)) return 'passing';
-  if(['RB','FB'].includes(pos)) return 'rushing';
-  if(['WR','TE'].includes(pos)) return 'receiving';
-  if(['K'].includes(pos)) return 'kicking';
-  if(['P'].includes(pos)) return 'punting';
-  if(['DE','DT','NT','DL','LB','OLB','ILB','CB','S','SS','FS','DB'].includes(pos)) return 'defensive';
-  return null;
-}
-
 // stat "names" (as ESPN returns them in the flat names[] array) worth surfacing per position
 function statKeysForPosition(pos){
   if(['QB'].includes(pos)) return ['passingYards','passingTouchdowns','interceptions','completions','passingAttempts','QBRating'];
@@ -1989,14 +1978,6 @@ function nflverseOffenseUrls(season){
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_${season}.csv`,
     `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`,
-  ];
-}
-
-function nflverseDefenseUrls(season){
-  return [
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_reg_${season}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_def_${season}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_def_${season}.csv`,
   ];
 }
 
@@ -2800,39 +2781,6 @@ function playerStatsUrlsForSeason(season){
 }
 
 // ---------- HOME / WEEKEND TOP PERFORMERS ----------
-function playerStatsUrlsForWeek(season){
-  return [
-    `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`,
-    `https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_${season}.csv`
-  ];
-}
-
-// simple PPR-style fantasy score, used only to rank "best performances" — not an
-// official stat, just a fair way to compare a QB's day to a WR's day
-function fantasyScore(r){
-  return (Number(r.passing_yards)||0)*0.04 + (Number(r.passing_tds)||0)*4 - (Number(r.interceptions)||0)*2
-    + (Number(r.rushing_yards)||0)*0.1 + (Number(r.rushing_tds)||0)*6
-    + (Number(r.receiving_yards)||0)*0.1 + (Number(r.receiving_tds)||0)*6 + (Number(r.receptions)||0)*1
-    + (Number(r.def_sacks)||0)*2 + (Number(r.def_interceptions)||0)*2;
-}
-
-function statLineFor(r){
-  const parts = [];
-  if(r.passing_yards>0) parts.push(`${r.passing_yards} pass yds`);
-  if(r.passing_tds>0) parts.push(`${r.passing_tds} pass TD`);
-  if(r.interceptions>0) parts.push(`${r.interceptions} INT`);
-  if(r.rushing_yards>0) parts.push(`${r.rushing_yards} rush yds`);
-  if(r.rushing_tds>0) parts.push(`${r.rushing_tds} rush TD`);
-  if(r.receiving_yards>0) parts.push(`${r.receiving_yards} rec yds`);
-  if(r.receptions>0) parts.push(`${r.receptions} rec`);
-  if(r.receiving_tds>0) parts.push(`${r.receiving_tds} rec TD`);
-  if(r.def_sacks>0) parts.push(`${r.def_sacks} sacks`);
-  if(r.def_interceptions>0) parts.push(`${r.def_interceptions} INT (def)`);
-  return parts.join(', ') || 'No major stats recorded';
-}
-
-
-
 async function buildCareerCache(onProgress){
   const careerMap = {}; // player_id -> aggregate record
   const seasons = [];
@@ -2989,5 +2937,13 @@ async function init(){
 }
 init();
 </script>
+<footer style="text-align:center;padding:24px 16px 32px;margin-top:32px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;line-height:1.8;">
+  <div style="font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">
+    🏈 Irish NFL Show Database
+  </div>
+  <div>Built by <strong>Craig Rigden</strong> &nbsp;·&nbsp; © <span id="footerYear"></span> Irish NFL Show. All rights reserved.</div>
+  <div style="margin-top:4px;">Data sourced from ESPN and nflverse. For internal show use only.</div>
+</footer>
+<script>document.getElementById('footerYear').textContent = new Date().getFullYear();</script>
 </body>
 </html>
