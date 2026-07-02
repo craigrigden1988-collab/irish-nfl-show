@@ -183,21 +183,9 @@ async function main() {
       console.log(`  No offense CSV found for ${SEASON}. Available CSVs:`, csvFiles.slice(0,10).join(', '));
     }
 
-    // Find defense CSV for this season
-    const defenseAsset = assets.find(a =>
-      a.name === `stats_player_def_reg_${SEASON}.csv`
-    ) || assets.find(a =>
-      a.name.endsWith('.csv') &&
-      a.name.includes(String(SEASON)) &&
-      a.name.includes('def')
-    );
-    if(defenseAsset){
-      console.log(`  Downloading defense: ${defenseAsset.name}`);
-      defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
-    } else {
-      const defFiles = assets.filter(a => a.name.endsWith('.csv') && a.name.includes('def')).map(a => a.name);
-      console.log(`  No defense CSV found for ${SEASON}. Defense files available:`, defFiles.slice(0,10).join(', '));
-    }
+    // Defense stats are included in the same file as offense — no separate download needed
+    console.log(`  ✓  Defense stats will be read from the offense file`);
+    defenseCSV = offenseCSV;
     if(defenseAsset){
       console.log(`  Downloading defense: ${defenseAsset.name}`);
       defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
@@ -209,10 +197,7 @@ async function main() {
   if(offenseCSV){
     save(`data/player_stats_offense_${SEASON}.csv`, offenseCSV);
     meta.endpoints.player_stats_offense = true;
-  }
-  if(defenseCSV){
-    save(`data/player_stats_defense_${SEASON}.csv`, defenseCSV);
-    meta.endpoints.player_stats_defense = true;
+    meta.endpoints.player_stats_defense = true; // defense is in the same file
   }
 
   // 7. Write meta file — app reads this to know when data was last refreshed
