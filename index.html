@@ -792,7 +792,7 @@ setClock(); setInterval(setClock,1000*30);
 // so development still works without deploying first.
 // Proxy URL — Netlify Edge Function handles all ESPN/weather requests
 // In production this is the same domain as the app so no CORS issues
-const WORKER_URL = '';
+const WORKER_URL = 'https://irish-nfl-worker.irish-nfl.workers.dev';
 
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 min for ESPN responses in sessionStorage
 
