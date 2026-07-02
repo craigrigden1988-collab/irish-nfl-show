@@ -712,7 +712,7 @@ function teamLogoTag(abbr, size){
 // no server required.
 // ============================================================
 const IDB_NAME = 'irishNflShowDB';
-const IDB_VERSION = 3;
+const IDB_VERSION = 4;
 let idbInstance = null;
 
 function openIDB(){
@@ -2291,14 +2291,14 @@ const STAT_TAB_CONFIG = {
     ]
   },
   punting: {
-    label: 'Punting', source: 'punting', primary: 'punts',
-    posFilter: ['P'],
+    label: 'Punting', source: 'espn', primary: 'puntYards',
     cols: [
-      {key:'punts',              label:'PUNTS'},
-      {key:'punt_yards',         label:'YDS'},
-      {key:'punt_yards_per_att', label:'AVG'},
-      {key:'punt_long',          label:'LNG'},
-      {key:'punt_net_yards',     label:'NET YDS'},
+      {key:'punts',          label:'PUNTS', espnCat:'punts'},
+      {key:'puntYards',      label:'YDS',   espnCat:'puntYards'},
+      {key:'yardsPerPunt',   label:'AVG',   espnCat:'yardsPerPunt'},
+      {key:'longPunt',       label:'LNG',   espnCat:'longPunt'},
+      {key:'puntsInside20',  label:'IN 20', espnCat:'puntsInside20'},
+      {key:'touchbacks',     label:'TB',    espnCat:'touchbacks'},
     ]
   },
 };
@@ -2356,9 +2356,23 @@ async function renderStatCat(cat){
   if(!tabInfo){ el.innerHTML = '<div class="loading">No data for this category.</div>'; return; }
 
   try{
-    // ESPN-sourced tabs (kicking, punting)
+    // ESPN-sourced tabs (punting) — fall back to previous season if current has no data
     if(tabInfo.source === 'espn'){
-      const categories = await fetchEspnLeaders(currentStatsSeason);
+      let espnSeason = currentStatsSeason;
+      let categories;
+      try{
+        categories = await fetchEspnLeaders(espnSeason);
+      }catch(e){
+        // 2026 not started yet — try 2025
+        if(espnSeason >= new Date().getFullYear()){
+          espnSeason = espnSeason - 1;
+          try{ categories = await fetchEspnLeaders(espnSeason); }catch(e2){
+            el.innerHTML = `<div class="err">Couldn't load stats.</div>`; return;
+          }
+        } else {
+          el.innerHTML = `<div class="err">Couldn't load stats.</div>`; return;
+        }
+      }
       const lookups = {};
       tabInfo.cols.forEach(col=>{
         const map = {};
@@ -2382,6 +2396,11 @@ async function renderStatCat(cat){
       });
       statSortKey = null; statSortAsc = false;
       renderStatsTableHTML(tabInfo, el);
+      if(espnSeason !== currentStatsSeason){
+        el.insertAdjacentHTML('afterbegin',
+          `<div class="src-note" style="margin-bottom:8px;color:var(--orange);">⚠️ No ${currentStatsSeason} data yet — showing ${espnSeason} season.</div>`
+        );
+      }
       return;
     }
 
