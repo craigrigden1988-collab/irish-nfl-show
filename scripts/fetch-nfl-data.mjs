@@ -186,10 +186,6 @@ async function main() {
     // Defense stats are included in the same file as offense — no separate download needed
     console.log(`  ✓  Defense stats will be read from the offense file`);
     defenseCSV = offenseCSV;
-    if(defenseAsset){
-      console.log(`  Downloading defense: ${defenseAsset.name}`);
-      defenseCSV = await fetchText('player stats (defense)', defenseAsset.browser_download_url);
-    }
   }catch(e){
     console.error(`  ✗  GitHub API query failed: ${e.message}`);
   }
